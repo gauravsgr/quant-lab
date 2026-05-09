@@ -1,0 +1,27 @@
+# Broker APIs
+alpaca-py
+
+# Data
+yfinance
+pandas
+numpy
+pyarrow          # parquet support for data/cache/
+
+# Technical indicators
+ta
+
+# Backtesting
+vectorbt
+
+# Utilities
+python-dotenv
+loguru
+pyyaml
+
+# Notebooks
+jupyter
+matplotlib
+plotly
+
+# Testing
+pytest
