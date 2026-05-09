@@ -1,11 +1,11 @@
 # quant-lab
 
-A personal algorithmic trading research framework for stocks and crypto. Supports multiple strategies, paper trading via Alpaca (and other brokers), backtesting with historical data, and Jupyter notebooks for analysis.
+A personal algorithmic trading research framework for stocks and crypto. Supports multiple strategies, paper and live trading via Alpaca (and other broker APIs), backtesting with historical data, and Jupyter notebooks for analysis.
 
 ## Features
 
-- Plug-and-play strategy system — add a new strategy in one file
-- Broker abstraction layer — swap Alpaca for another broker via config, not code
+- Plug-and-play strategy system: add a new strategy in one file
+- Broker abstraction layer: swap Alpaca for another broker via config, not code
 - `paper` / `live` mode controlled by a single env var, with hard risk guards
 - Backtesting engine with Sharpe, drawdown, and win-rate metrics
 - Structured JSON trade logs and per-run backtest results
@@ -36,9 +36,9 @@ quant-lab/
 │   └── runner.py               # live trading loop
 ├── data/
 │   ├── loaders/                # Alpaca + yfinance data fetchers
-│   └── cache/                  # gitignored — parquet cache
-├── notebooks/                  # analysis only — reads results/, logs/
-├── logs/                       # gitignored — structured trade logs
+│   └── cache/                  # gitignored - parquet cache
+├── notebooks/                  # analysis only - reads results/, logs/
+├── logs/                       # gitignored - structured trade logs
 └── tests/
 ```
 
