@@ -7,8 +7,9 @@ from unittest.mock import patch, MagicMock
 
 from strategies.base import Signal
 from utils.notifier import (
-    SlackNotifier, _build_signal_blocks, _build_weekly_report_blocks,
-    _reddit_url, _google_news_url, _capitol_trades_url, _bar,
+    SlackNotifier, _build_signal_blocks, _build_approval_buttons,
+    _build_weekly_report_blocks, _reddit_url, _google_news_url,
+    _capitol_trades_url, _bar,
 )
 
 
@@ -117,3 +118,80 @@ class TestSlackNotifierSend:
             result = notifier.send_signal_alert(make_signal(), approval_pending=True, signal_id=42)
             assert result["ts"] == "9999.0001"
             assert result["channel"] == "C456"
+
+    def test_slack_api_error_returns_none(self):
+        from slack_sdk.errors import SlackApiError
+        with patch("slack_sdk.WebClient.chat_postMessage", side_effect=SlackApiError("err", {})):
+            notifier = SlackNotifier("xoxb-fake-token", "C123")
+            result = notifier.send_signal_alert(make_signal())
+            assert result is None
+
+    def test_update_approval_message_approved(self):
+        with patch("slack_sdk.WebClient.chat_update") as mock_update:
+            notifier = SlackNotifier("xoxb-fake-token", "C123")
+            notifier.update_approval_message(
+                {"platform": "slack", "ts": "1234.5678", "channel": "C123"},
+                status="approved",
+                order_id=99,
+            )
+            mock_update.assert_called_once()
+            call_kwargs = mock_update.call_args.kwargs
+            assert "99" in call_kwargs["text"]
+            assert call_kwargs["ts"] == "1234.5678"
+
+    def test_update_approval_message_rejected(self):
+        with patch("slack_sdk.WebClient.chat_update") as mock_update:
+            notifier = SlackNotifier("xoxb-fake-token", "C123")
+            notifier.update_approval_message(
+                {"platform": "slack", "ts": "5678.0", "channel": "C123"},
+                status="rejected",
+            )
+            mock_update.assert_called_once()
+            assert "REJECTED" in mock_update.call_args.kwargs["text"]
+
+    def test_update_approval_message_no_ts_skips_call(self):
+        with patch("slack_sdk.WebClient.chat_update") as mock_update:
+            notifier = SlackNotifier("xoxb-fake-token", "C123")
+            notifier.update_approval_message({"platform": "slack"}, status="approved")
+            mock_update.assert_not_called()
+
+
+class TestApprovalButtons:
+    def test_buttons_block_has_two_elements(self):
+        blocks = _build_approval_buttons(signal_id=7)
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "actions"
+        elements = blocks[0]["elements"]
+        assert len(elements) == 2
+
+    def test_approve_button_action_id(self):
+        blocks = _build_approval_buttons(signal_id=7)
+        approve_btn = blocks[0]["elements"][0]
+        assert approve_btn["action_id"] == "approve_signal"
+        assert approve_btn["value"] == "7"
+        assert approve_btn["style"] == "primary"
+
+    def test_reject_button_action_id(self):
+        blocks = _build_approval_buttons(signal_id=7)
+        reject_btn = blocks[0]["elements"][1]
+        assert reject_btn["action_id"] == "reject_signal"
+        assert reject_btn["value"] == "7"
+        assert reject_btn["style"] == "danger"
+
+    def test_signal_id_embedded_as_string(self):
+        blocks = _build_approval_buttons(signal_id=42)
+        for element in blocks[0]["elements"]:
+            assert element["value"] == "42"
+
+    def test_approval_pending_includes_buttons(self):
+        signal = make_signal()
+        blocks = _build_signal_blocks(signal, order=None, approval_pending=True)
+        blocks += _build_approval_buttons(signal_id=1)
+        action_blocks = [b for b in blocks if b.get("type") == "actions"]
+        assert len(action_blocks) == 1
+
+    def test_no_approval_no_buttons(self):
+        signal = make_signal()
+        blocks = _build_signal_blocks(signal, order=None, approval_pending=False)
+        action_blocks = [b for b in blocks if b.get("type") == "actions"]
+        assert len(action_blocks) == 0

@@ -82,3 +82,81 @@ class TestAdanosBudget:
         repo.increment_adanos_calls(conn, "2026-05")
         assert repo.get_adanos_call_count(conn, "2026-04") == 1
         assert repo.get_adanos_call_count(conn, "2026-05") == 1
+
+
+class TestPendingApprovals:
+    def _insert_signal(self, conn) -> int:
+        return repo.insert_signal(
+            conn, ticker="AAPL", signal_type="STRONG_BUY", confidence=0.80
+        )
+
+    def test_insert_and_retrieve(self, conn):
+        sid = self._insert_signal(conn)
+        metadata = {"platform": "slack", "ts": "1234.5678", "channel": "C123"}
+        repo.insert_pending_approval(conn, sid, "AAPL", "STRONG_BUY", metadata)
+
+        row = repo.get_pending_approval(conn, sid)
+        assert row is not None
+        assert row["ticker"] == "AAPL"
+        assert row["status"] == "pending"
+        assert row["notification_metadata"]["ts"] == "1234.5678"
+        assert row["notification_metadata"]["platform"] == "slack"
+
+    def test_metadata_roundtrips_as_dict(self, conn):
+        sid = self._insert_signal(conn)
+        metadata = {"platform": "slack", "ts": "9999.0", "channel": "C999", "extra": 42}
+        repo.insert_pending_approval(conn, sid, "AAPL", "STRONG_BUY", metadata)
+
+        row = repo.get_pending_approval(conn, sid)
+        assert row["notification_metadata"]["extra"] == 42
+
+    def test_resolve_approved(self, conn):
+        sid = self._insert_signal(conn)
+        repo.insert_pending_approval(conn, sid, "AAPL", "STRONG_BUY", {"platform": "slack", "ts": "1"})
+        repo.resolve_pending_approval(conn, sid, "approved")
+
+        row = repo.get_pending_approval(conn, sid)
+        assert row["status"] == "approved"
+        assert row["resolved_at"] is not None
+
+    def test_resolve_rejected(self, conn):
+        sid = self._insert_signal(conn)
+        repo.insert_pending_approval(conn, sid, "AAPL", "STRONG_BUY", {"platform": "slack", "ts": "2"})
+        repo.resolve_pending_approval(conn, sid, "rejected")
+
+        row = repo.get_pending_approval(conn, sid)
+        assert row["status"] == "rejected"
+
+    def test_get_nonexistent_returns_none(self, conn):
+        assert repo.get_pending_approval(conn, 99999) is None
+
+    def test_get_signal_by_id_returns_signal(self, conn):
+        sid = repo.insert_signal(
+            conn,
+            ticker="NVDA",
+            signal_type="STRONG_BUY",
+            confidence=0.85,
+            sentiment_score=0.72,
+            politician_action="BUY",
+            analyst_rating="Strong Buy",
+            analyst_buy_count=20,
+            analyst_hold_count=3,
+            analyst_sell_count=1,
+        )
+        signal = repo.get_signal_by_id(conn, sid)
+        assert signal is not None
+        assert signal.ticker == "NVDA"
+        assert signal.signal_type == "STRONG_BUY"
+        assert signal.confidence == 0.85
+        assert signal.order_type == "call_option"
+        assert signal.sentiment_score == 0.72
+
+    def test_get_signal_by_id_put_maps_order_type(self, conn):
+        sid = repo.insert_signal(
+            conn, ticker="SPY", signal_type="STRONG_PUT", confidence=0.70
+        )
+        signal = repo.get_signal_by_id(conn, sid)
+        assert signal.order_type == "put_option"
+
+    def test_get_signal_by_id_missing_returns_none(self, conn):
+        assert repo.get_signal_by_id(conn, 99999) is None
