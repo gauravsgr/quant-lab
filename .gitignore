@@ -100,3 +100,6 @@ tempCodeRunnerFile.py
 # OS
 .DS_Store
 Thumbs.db
+
+# SQLite database (local trading state; never commit)
+*.db

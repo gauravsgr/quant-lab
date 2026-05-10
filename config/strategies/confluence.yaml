@@ -1,0 +1,16 @@
+weights:
+  sentiment: 0.40
+  politician: 0.35
+  analyst: 0.25
+
+thresholds:
+  min_confidence_to_trade: 0.65
+  strong_buy_sentiment: 0.70
+  strong_put_sentiment: -0.70
+
+position_sizing:
+  max_position_pct: 0.05      # 5% of account equity per trade
+  trailing_stop_pct: 0.10     # 10% trailing stop loss
+
+adanos:
+  monthly_budget_limit: 225

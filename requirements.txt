@@ -23,5 +23,23 @@ jupyter
 matplotlib
 plotly
 
+# ── New: Alternative Data Agent ───────────────────────────────────────────────
+
+# Web scraping (Capitol Trades)
+requests
+beautifulsoup4
+fake-useragent
+tenacity         # retry/backoff
+
+# Scheduling
+APScheduler>=3.10
+
+# Slack notifications
+slack-sdk
+
+# Database
+sqlalchemy
+
 # Testing
 pytest
+pytest-mock
