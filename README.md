@@ -257,6 +257,34 @@ python main.py backtest --strategy rsi_mean_revert --symbol AAPL --start 2023-01
 
 Results are written to `backtesting/results/` as JSON with timestamp filenames.
 
+## Notebooks
+
+Two Jupyter notebook templates are in `notebooks/`. Run them locally on your laptop - do not run Jupyter on the GCP machine (1 GB RAM is fully used by the agent).
+
+| Notebook | What it shows |
+|---|---|
+| `01_backtest_analysis.ipynb` | Equity curve, trade list, P&L distribution for any backtest result file |
+| `02_trading_performance.ipynb` | Live/paper trading P&L, signal quality by confidence, source attribution, ghost trade regret, approval history, Adanos budget |
+
+**Running locally against data on GCP:**
+
+```bash
+# 1. Copy the database from GCP to your laptop
+gcloud compute scp quant-lab:~/quant-lab/trading_system.db ./trading_system.db --zone=us-central1-a
+
+# 2. Open the notebook (the agent on GCP is unaffected)
+jupyter notebook notebooks/02_trading_performance.ipynb
+```
+
+**Running locally against a local agent:**
+
+```bash
+jupyter notebook notebooks/02_trading_performance.ipynb
+# DB_PATH in the notebook defaults to ../trading_system.db (repo root)
+```
+
+Notebooks contain no strategy logic - they only read from `backtesting/results/` and `trading_system.db`.
+
 ## Running tests
 
 ```bash
