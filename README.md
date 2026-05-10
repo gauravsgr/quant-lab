@@ -104,6 +104,150 @@ python main.py agent --run-now afternoon
 python main.py agent --run-now weekly
 ```
 
+## How scheduling works
+
+No cron setup needed. APScheduler's `BlockingScheduler` is embedded in the process itself. When you run `python main.py agent`, it registers three internal jobs and then sleeps between firings:
+
+| Job | When |
+|---|---|
+| Morning cycle | 10:15 AM EST, weekdays |
+| Afternoon cycle | 3:45 PM EST, weekdays |
+| Weekly audit | 4:00 PM EST, Fridays |
+
+The process never exits between cycles. It wakes itself at the scheduled time, runs the cycle, and goes back to sleep. The only external thing you need is something to keep the process alive across crashes and reboots - Docker's `restart: unless-stopped` handles that.
+
+## Running without Docker
+
+The Quickstart section above is the no-Docker path. Clone, create a venv, install requirements.txt, copy `.env`, and run `python main.py agent`. That is all that is needed for local development.
+
+## Running with Docker
+
+Make sure `.env` exists in the project root (Docker reads it via `env_file:` in docker-compose.yml).
+
+```bash
+# Build the image and start the agent in the background
+docker compose up --build -d
+
+# Tail live logs
+docker compose logs -f agent
+
+# Trigger a cycle manually without restarting the container
+docker compose exec agent python main.py agent --run-now morning
+
+# Stop the agent
+docker compose down
+
+# Rebuild after a code change and restart
+docker compose up --build -d
+```
+
+The SQLite database (`trading_system.db`) and logs (`logs/`) are mounted from the host, so trade history and logs persist across container restarts.
+
+## Publishing to Docker Hub
+
+Use `buildx` to create a single multi-platform image that works on amd64 (GCP), arm64 (Raspberry Pi 4), and armv7 (Raspberry Pi 3):
+
+```bash
+docker buildx create --use
+docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 \
+  -t your-dockerhub-username/quant-lab-agent:latest \
+  --push .
+```
+
+On any target machine, Docker automatically pulls the correct layer for that machine's architecture:
+
+```bash
+docker pull your-dockerhub-username/quant-lab-agent:latest
+docker compose up -d
+```
+
+## Deploying to Raspberry Pi
+
+Raspberry Pi 3 (1 GB RAM, ARMv7) is sufficient. The agent is I/O bound - it makes HTTP calls and writes to SQLite for a few seconds per cycle, then sleeps. CPU and RAM are not the constraint.
+
+**Option A - pull from Docker Hub (faster):**
+
+```bash
+# On the Pi
+docker pull your-dockerhub-username/quant-lab-agent:latest
+# Copy docker-compose.yml and your .env to the Pi, then:
+docker compose up -d
+```
+
+Docker automatically selects `linux/arm/v7` for Pi 3 and `linux/arm64` for Pi 4.
+
+**Option B - build locally on the Pi:**
+
+```bash
+# On the Pi
+git clone https://github.com/gauravsgr/quant-lab.git
+cd quant-lab
+cp .env.example .env   # fill in real keys
+docker compose up --build -d
+```
+
+Building numpy and pandas locally on Pi 3 takes roughly 10-15 minutes the first time. Subsequent starts reuse the cached layer.
+
+## Deploying to GCP free tier
+
+GCP's always-free tier includes one `e2-micro` instance (0.25 vCPU, 1 GB RAM) in `us-central1`, `us-west1`, or `us-east1`. The agent runs comfortably within those limits.
+
+```bash
+# 1. Create the VM (or use the GCP Console)
+gcloud compute instances create quant-lab \
+  --machine-type=e2-micro \
+  --zone=us-central1-a \
+  --image-family=debian-12 \
+  --image-project=debian-cloud
+
+# 2. SSH in
+gcloud compute ssh quant-lab --zone=us-central1-a
+
+# 3. Install Docker (on the VM)
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+newgrp docker
+
+# 4. Clone the repo (or pull from Docker Hub)
+git clone https://github.com/gauravsgr/quant-lab.git
+cd quant-lab
+
+# 5. Copy your .env from local machine (run this locally, not on the VM)
+gcloud compute scp .env quant-lab:~/quant-lab/.env --zone=us-central1-a
+
+# 6. Start the agent
+docker compose up --build -d
+
+# 7. Tail logs
+docker compose logs -f agent
+```
+
+Keep the VM in one of the three free regions. Do not run other workloads on the same instance - 1 GB RAM is enough for the agent alone.
+
+## Day-to-day operations
+
+```bash
+# Check if the agent container is running
+docker compose ps
+
+# Tail live logs
+docker compose logs -f agent
+
+# Trigger a cycle immediately without restarting the container
+docker compose exec agent python main.py agent --run-now morning
+docker compose exec agent python main.py agent --run-now afternoon
+docker compose exec agent python main.py agent --run-now weekly
+
+# Rebuild and restart after a code change
+docker compose up --build -d
+
+# Stop the agent
+docker compose down
+
+# Inspect recent orders in the SQLite database (from the host)
+sqlite3 trading_system.db "SELECT ticker, order_type, status, pnl FROM orders ORDER BY submitted_at DESC LIMIT 10;"
+```
+
 ## Backtesting
 
 ```bash
