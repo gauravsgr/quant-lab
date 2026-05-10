@@ -58,17 +58,18 @@ def submit_signal_order(
         validator.pre_trade_check(
             signal,
             min_confidence=min_confidence,
-            require_approval=require_approval,
             already_traded_tickers=already_traded_tickers,
         )
     except validator.ValidationError as e:
-        if require_approval and signal.signal_type != "NEUTRAL":
-            # Approval mode: notify Slack without submitting to the broker.
-            logger.info(f"Approval required for {signal.ticker}, notifying only")
-            if notifier:
-                notifier.send_signal_alert(signal, order=None, approval_pending=True)
-        else:
-            logger.info(str(e))
+        logger.info(str(e))
+        return None
+
+    if require_approval:
+        # Signal passed all checks but execution is blocked pending manual approval.
+        # Notify Slack so the user can review and approve manually.
+        logger.info(f"Approval required for {signal.ticker}, notifying without executing")
+        if notifier:
+            notifier.send_signal_alert(signal, order=None, approval_pending=True)
         return None
 
     current_price = broker.get_latest_price(signal.ticker)
