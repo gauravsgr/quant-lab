@@ -25,17 +25,24 @@ class Settings:
         alpaca_secret_key: Alpaca API secret key.
         alpaca_base_url: Alpaca REST base URL. Defaults to the paper endpoint.
         adanos_api_key: Adanos Market Sentiment API key.
-        slack_webhook_url: Slack incoming webhook URL for trade alerts.
+        slack_bot_token: Slack bot token (xoxb-...) for posting messages via API.
+        slack_app_token: Slack app-level token (xapp-...) for Socket Mode. Optional;
+            if absent, interactive buttons are disabled and the agent falls back to
+            notify-only mode when REQUIRE_APPROVAL=true.
+        slack_channel_id: Slack channel ID where trade alerts are posted.
         db_path: Path to the SQLite database file.
         agent_timezone: IANA timezone name for APScheduler cron jobs.
-        require_approval: When True, signals are logged and notified but not executed.
+        require_approval: When True, signals are notified with Approve/Reject buttons
+            and not executed until the user approves via Slack.
     """
     trading_mode: str
     alpaca_api_key: str
     alpaca_secret_key: str
     alpaca_base_url: str
     adanos_api_key: str
-    slack_webhook_url: str
+    slack_bot_token: str
+    slack_app_token: str
+    slack_channel_id: str
     db_path: str
     agent_timezone: str
     require_approval: bool
@@ -56,7 +63,9 @@ def load_settings() -> Settings:
         alpaca_secret_key=_require("ALPACA_SECRET_KEY"),
         alpaca_base_url=os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets/v2"),
         adanos_api_key=_require("ADANOS_API_KEY"),
-        slack_webhook_url=_require("SLACK_WEBHOOK_URL"),
+        slack_bot_token=_require("SLACK_BOT_TOKEN"),
+        slack_app_token=os.getenv("SLACK_APP_TOKEN", ""),
+        slack_channel_id=_require("SLACK_CHANNEL_ID"),
         db_path=os.getenv("DB_PATH", "trading_system.db"),
         agent_timezone=os.getenv("AGENT_TIMEZONE", "America/New_York"),
         require_approval=os.getenv("REQUIRE_APPROVAL", "false").lower() == "true",

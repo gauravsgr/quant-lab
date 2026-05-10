@@ -24,8 +24,9 @@ tenacity
 # Scheduling
 APScheduler>=3.10
 
-# Slack notifications
+# Slack notifications (websocket-client enables Socket Mode for interactive buttons)
 slack-sdk
+websocket-client
 
 # Database
 sqlalchemy

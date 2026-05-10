@@ -1,6 +1,6 @@
 """Tests for Slack Block Kit payload construction.
 
-All tests use mocked WebhookClient; no real webhook calls are made.
+All tests use mocked WebClient; no real Slack API calls are made.
 """
 import pytest
 from unittest.mock import patch, MagicMock
@@ -101,9 +101,19 @@ class TestHelpers:
 
 
 class TestSlackNotifierSend:
-    def test_send_does_not_raise_on_200(self):
-        with patch("slack_sdk.webhook.WebhookClient.send") as mock_send:
-            mock_send.return_value = MagicMock(status_code=200, body="ok")
-            notifier = SlackNotifier("https://hooks.slack.com/fake")
-            notifier.send_signal_alert(make_signal())
-            mock_send.assert_called_once()
+    def test_send_does_not_raise(self):
+        with patch("slack_sdk.WebClient.chat_postMessage") as mock_post:
+            mock_post.return_value = {"ts": "1234.5678", "channel": "C123"}
+            notifier = SlackNotifier("xoxb-fake-token", "C123")
+            result = notifier.send_signal_alert(make_signal())
+            mock_post.assert_called_once()
+            assert result is not None
+            assert result["platform"] == "slack"
+
+    def test_approval_pending_returns_metadata(self):
+        with patch("slack_sdk.WebClient.chat_postMessage") as mock_post:
+            mock_post.return_value = {"ts": "9999.0001", "channel": "C456"}
+            notifier = SlackNotifier("xoxb-fake-token", "C456")
+            result = notifier.send_signal_alert(make_signal(), approval_pending=True, signal_id=42)
+            assert result["ts"] == "9999.0001"
+            assert result["channel"] == "C456"

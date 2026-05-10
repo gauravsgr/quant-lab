@@ -65,11 +65,35 @@ def submit_signal_order(
         return None
 
     if require_approval:
-        # Signal passed all checks but execution is blocked pending manual approval.
-        # Notify Slack so the user can review and approve manually.
-        logger.info(f"Approval required for {signal.ticker}, notifying without executing")
+        # Signal passed all checks. Insert it to DB first so we have a signal_id
+        # to embed in the button action value for the Socket Mode callback.
+        logger.info(f"Approval required for {signal.ticker}, inserting signal and awaiting Slack approval")
+        signal_id = repo.insert_signal(
+            db_conn,
+            ticker=signal.ticker,
+            signal_type=signal.signal_type,
+            sentiment_score=signal.sentiment_score,
+            politician_action=signal.politician_action,
+            politician_name=signal.politician_name,
+            politician_party=getattr(signal, "politician_party", None),
+            politician_chamber=getattr(signal, "politician_chamber", None),
+            politician_amount=getattr(signal, "politician_amount", None),
+            analyst_rating=signal.analyst_rating,
+            analyst_buy_count=signal.analyst_buy_count,
+            analyst_hold_count=signal.analyst_hold_count,
+            analyst_sell_count=signal.analyst_sell_count,
+            analyst_price_target=signal.analyst_price_target,
+            news_headline=signal.news_headline,
+            confidence=signal.confidence,
+        )
         if notifier:
-            notifier.send_signal_alert(signal, order=None, approval_pending=True)
+            metadata = notifier.send_signal_alert(
+                signal, order=None, approval_pending=True, signal_id=signal_id
+            )
+            if metadata:
+                repo.insert_pending_approval(
+                    db_conn, signal_id, signal.ticker, signal.signal_type, metadata
+                )
         return None
 
     current_price = broker.get_latest_price(signal.ticker)

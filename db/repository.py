@@ -17,7 +17,8 @@ from sqlalchemy import Integer, select, update, insert, func
 from sqlalchemy.engine import Connection
 
 from db.models import (
-    signals_table, orders_table, performance_table, adanos_usage_table
+    signals_table, orders_table, performance_table,
+    adanos_usage_table, pending_approvals_table,
 )
 
 
@@ -40,6 +41,45 @@ def insert_signal(conn: Connection, **fields) -> int:
     result = conn.execute(insert(signals_table).values(**fields))
     conn.commit()
     return result.inserted_primary_key[0]
+
+
+def get_signal_by_id(conn: Connection, signal_id: int):
+    """Fetch a signal row by primary key and reconstruct a Signal dataclass.
+
+    Args:
+        conn: Active SQLAlchemy connection.
+        signal_id: Primary key of the signal to fetch.
+
+    Returns:
+        A Signal instance, or None if the row does not exist.
+    """
+    from strategies.base import Signal
+    row = conn.execute(
+        select(signals_table).where(signals_table.c.id == signal_id)
+    ).fetchone()
+    if not row:
+        return None
+    r = dict(row._mapping)
+    order_type = "call_option" if r["signal_type"] == "STRONG_BUY" else "put_option"
+    return Signal(
+        ticker=r["ticker"],
+        signal_type=r["signal_type"],
+        confidence=r["confidence"],
+        order_type=order_type,
+        sentiment_score=r.get("sentiment_score"),
+        politician_action=r.get("politician_action"),
+        politician_name=r.get("politician_name"),
+        politician_party=r.get("politician_party"),
+        politician_chamber=r.get("politician_chamber"),
+        politician_amount=r.get("politician_amount"),
+        analyst_rating=r.get("analyst_rating"),
+        analyst_buy_count=r.get("analyst_buy_count") or 0,
+        analyst_hold_count=r.get("analyst_hold_count") or 0,
+        analyst_sell_count=r.get("analyst_sell_count") or 0,
+        analyst_price_target=r.get("analyst_price_target"),
+        news_headline=r.get("news_headline"),
+        disclosure_url=None,  # not persisted in DB
+    )
 
 
 def get_signals_for_date(conn: Connection, date: str) -> list[dict]:
@@ -291,6 +331,84 @@ def increment_adanos_calls(conn: Connection, month: str) -> int:
         conn.execute(insert(adanos_usage_table).values(month=month, call_count=1))
     conn.commit()
     return new_count
+
+
+# ---------------------------------------------------------------------------
+# Pending approvals
+# ---------------------------------------------------------------------------
+
+def insert_pending_approval(
+    conn: Connection,
+    signal_id: int,
+    ticker: str,
+    signal_type: str,
+    notification_metadata: dict,
+) -> int:
+    """Insert a pending approval record and return its primary key.
+
+    Args:
+        conn: Active SQLAlchemy connection.
+        signal_id: FK to signals.id for the signal awaiting approval.
+        ticker: Stock ticker symbol.
+        signal_type: STRONG_BUY or STRONG_PUT.
+        notification_metadata: Platform-specific dict for updating the message
+            (e.g. {"platform": "slack", "ts": "...", "channel": "..."}).
+
+    Returns:
+        Integer primary key of the inserted row.
+    """
+    import json
+    result = conn.execute(
+        insert(pending_approvals_table).values(
+            signal_id=signal_id,
+            ticker=ticker,
+            signal_type=signal_type,
+            notification_metadata=json.dumps(notification_metadata),
+            status="pending",
+            created_at=_now(),
+        )
+    )
+    conn.commit()
+    return result.inserted_primary_key[0]
+
+
+def get_pending_approval(conn: Connection, signal_id: int) -> Optional[dict]:
+    """Return the pending approval row for a signal, or None if not found.
+
+    Args:
+        conn: Active SQLAlchemy connection.
+        signal_id: FK to signals.id.
+
+    Returns:
+        Row dict with notification_metadata deserialized to a dict, or None.
+    """
+    import json
+    row = conn.execute(
+        select(pending_approvals_table).where(
+            pending_approvals_table.c.signal_id == signal_id
+        )
+    ).fetchone()
+    if not row:
+        return None
+    r = dict(row._mapping)
+    r["notification_metadata"] = json.loads(r["notification_metadata"])
+    return r
+
+
+def resolve_pending_approval(conn: Connection, signal_id: int, status: str) -> None:
+    """Set the resolution status and timestamp for a pending approval.
+
+    Args:
+        conn: Active SQLAlchemy connection.
+        signal_id: FK to signals.id.
+        status: One of "approved", "rejected", or "failed".
+    """
+    conn.execute(
+        update(pending_approvals_table)
+        .where(pending_approvals_table.c.signal_id == signal_id)
+        .values(status=status, resolved_at=_now())
+    )
+    conn.commit()
 
 
 # ---------------------------------------------------------------------------

@@ -1,18 +1,18 @@
 """Slack notifications for trade signals and audit reports.
 
-Sends rich Block Kit messages via a Slack Incoming Webhook. Each signal alert
-includes five sections: header, executive summary, signal breakdown with ASCII
-progress bars, contextual news, and counter-considerations reviewed.
+Sends rich Block Kit messages via the Slack Web API (chat.postMessage). When
+REQUIRE_APPROVAL=true, signal alerts include interactive Approve/Reject buttons
+that trigger order execution via Socket Mode callbacks in utils/slack_actions.py.
 
 Typical usage:
-    notifier = SlackNotifier(webhook_url)
+    notifier = SlackNotifier(bot_token, channel_id)
     notifier.send_signal_alert(signal, order=order_dict)
 """
 import urllib.parse
 from datetime import datetime, timezone
 from typing import Optional
 
-from slack_sdk.webhook import WebhookClient
+from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from loguru import logger
 
@@ -52,42 +52,101 @@ def _capitol_trades_url(ticker: str, politician: Optional[str] = None) -> str:
 
 
 class SlackNotifier:
-    """Sends trade alerts and audit reports to a Slack channel via webhook.
+    """Sends trade alerts and audit reports to a Slack channel via the Web API.
 
     Attributes:
-        _client: slack_sdk WebhookClient bound to the configured webhook URL.
+        _client: slack_sdk WebClient authenticated with the bot token.
+        _channel_id: Slack channel ID where all messages are posted.
     """
 
-    def __init__(self, webhook_url: str):
-        """Initialize the notifier with a Slack Incoming Webhook URL.
+    def __init__(self, bot_token: str, channel_id: str):
+        """Initialize the notifier with a Slack bot token and channel.
 
         Args:
-            webhook_url: Full HTTPS webhook URL from the Slack App configuration.
+            bot_token: Slack bot token (xoxb-...) from the Slack App configuration.
+            channel_id: Slack channel ID (e.g. C0123456789) for trade alerts.
         """
-        self._client = WebhookClient(webhook_url)
+        self._client = WebClient(token=bot_token)
+        self._channel_id = channel_id
 
     def send_signal_alert(
         self,
         signal: Signal,
         order: Optional[dict] = None,
         approval_pending: bool = False,
-    ) -> None:
+        signal_id: Optional[int] = None,
+    ) -> Optional[dict]:
         """Send a rich Block Kit signal alert to Slack.
+
+        When approval_pending=True and signal_id is provided, two interactive
+        buttons (Approve / Reject) are appended to the message. Clicking a button
+        triggers the Socket Mode handler in utils/slack_actions.py.
 
         Args:
             signal: The Signal instance that triggered the alert.
             order: Optional dict with order details (qty, entry_price, stop_price,
                 notional, broker_order_id). If None, shows a notification-only message.
-            approval_pending: When True, adds an approval-pending header label and
-                suppresses execution details.
+            approval_pending: When True, adds an awaiting-approval label and buttons.
+            signal_id: DB primary key of the signal; embedded in button action values
+                so the callback can look up the signal and execute it on approval.
+
+        Returns:
+            A notification_metadata dict on success (platform-agnostic; stores what
+            is needed to update the message later), or None on failure.
         """
         blocks = _build_signal_blocks(signal, order, approval_pending)
+        if approval_pending and signal_id is not None:
+            blocks += _build_approval_buttons(signal_id)
         try:
-            resp = self._client.send(blocks=blocks, text=_signal_fallback_text(signal))
-            if resp.status_code != 200:
-                logger.error(f"Slack signal alert failed: {resp.status_code} {resp.body}")
+            resp = self._client.chat_postMessage(
+                channel=self._channel_id,
+                blocks=blocks,
+                text=_signal_fallback_text(signal),
+            )
+            return {"platform": "slack", "ts": resp["ts"], "channel": resp["channel"]}
         except SlackApiError as e:
-            logger.error(f"Slack API error: {e}")
+            logger.error(f"Slack signal alert failed: {e}")
+            return None
+
+    def update_approval_message(
+        self,
+        notification_metadata: dict,
+        status: str,
+        order_id: Optional[int] = None,
+    ) -> None:
+        """Replace an approval-pending message with a resolved status message.
+
+        Removes the Approve/Reject buttons and shows the outcome. Called by the
+        Socket Mode callback in utils/slack_actions.py after the user clicks a button.
+
+        Args:
+            notification_metadata: Dict returned by send_signal_alert (contains
+                platform, ts, and channel for Slack).
+            status: "approved", "rejected", or "failed".
+            order_id: DB order ID to show in the approved message, if available.
+        """
+        ts = notification_metadata.get("ts")
+        channel = notification_metadata.get("channel", self._channel_id)
+        if not ts:
+            logger.warning("update_approval_message: no ts in notification_metadata")
+            return
+
+        if status == "approved":
+            text = f"APPROVED - Order #{order_id} submitted to Alpaca." if order_id else "APPROVED - Order submitted."
+        elif status == "rejected":
+            text = "REJECTED by user."
+        else:
+            text = "APPROVAL FAILED - see logs for details."
+
+        blocks = [
+            {"type": "divider"},
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"*{text}*"}},
+            {"type": "divider"},
+        ]
+        try:
+            self._client.chat_update(channel=channel, ts=ts, blocks=blocks, text=text)
+        except SlackApiError as e:
+            logger.error(f"Slack message update failed: {e}")
 
     def send_daily_summary(self, closed_orders: list[dict], ghost_trades: list[dict]) -> None:
         """Send the end-of-day summary with closed positions and ghost trades.
@@ -98,7 +157,11 @@ class SlackNotifier:
         """
         blocks = _build_daily_summary_blocks(closed_orders, ghost_trades)
         try:
-            self._client.send(blocks=blocks, text="Daily Trading Summary")
+            self._client.chat_postMessage(
+                channel=self._channel_id,
+                blocks=blocks,
+                text="Daily Trading Summary",
+            )
         except SlackApiError as e:
             logger.error(f"Slack daily summary error: {e}")
 
@@ -119,7 +182,11 @@ class SlackNotifier:
         """
         blocks = _build_weekly_report_blocks(precision_data, adanos_usage, ghost_regrets, best_performer)
         try:
-            self._client.send(blocks=blocks, text="Weekly Signal Audit Report")
+            self._client.chat_postMessage(
+                channel=self._channel_id,
+                blocks=blocks,
+                text="Weekly Signal Audit Report",
+            )
         except SlackApiError as e:
             logger.error(f"Slack weekly report error: {e}")
 
@@ -154,7 +221,7 @@ def _build_signal_blocks(signal: Signal, order: Optional[dict], approval_pending
         approval_pending: When True, the header shows an awaiting-approval label.
 
     Returns:
-        List of Slack Block Kit block dicts ready for WebhookClient.send().
+        List of Slack Block Kit block dicts ready for chat_postMessage.
     """
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M EST")
     is_buy = signal.signal_type == "STRONG_BUY"
@@ -240,6 +307,41 @@ def _build_signal_blocks(signal: Signal, order: Optional[dict], approval_pending
     ]
 
     return blocks
+
+
+def _build_approval_buttons(signal_id: int) -> list:
+    """Build an actions block with Approve and Reject buttons for a pending signal.
+
+    The signal_id is embedded in each button's value so the Socket Mode callback
+    in utils/slack_actions.py can look up and execute the correct signal.
+
+    Args:
+        signal_id: DB primary key of the signal awaiting approval.
+
+    Returns:
+        A list containing one Slack actions block.
+    """
+    return [
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Approve", "emoji": False},
+                    "style": "primary",
+                    "action_id": "approve_signal",
+                    "value": str(signal_id),
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Reject", "emoji": False},
+                    "style": "danger",
+                    "action_id": "reject_signal",
+                    "value": str(signal_id),
+                },
+            ],
+        }
+    ]
 
 
 def _build_executive_summary(signal: Signal, is_buy: bool, order: Optional[dict]) -> str:

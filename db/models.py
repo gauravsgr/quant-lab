@@ -4,10 +4,11 @@ All tables are created idempotently via create_all(). The database file path
 is controlled by the DB_PATH environment variable (default: trading_system.db).
 
 Tables:
-    signals       - every scored signal with all raw alternative-data inputs
-    orders        - every submitted order with trailing stop state
-    performance   - daily mark-to-market records and ghost trades
-    adanos_usage  - monthly API call counter for Adanos budget enforcement
+    signals            - every scored signal with all raw alternative-data inputs
+    orders             - every submitted order with trailing stop state
+    performance        - daily mark-to-market records and ghost trades
+    adanos_usage       - monthly API call counter for Adanos budget enforcement
+    pending_approvals  - signals awaiting user approval via Slack buttons
 """
 import os
 from sqlalchemy import (
@@ -78,6 +79,20 @@ adanos_usage_table = Table(
     "adanos_usage", metadata,
     Column("month", Text, primary_key=True),       # YYYY-MM
     Column("call_count", Integer, nullable=False, default=0),
+)
+
+pending_approvals_table = Table(
+    "pending_approvals", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("signal_id", Integer, nullable=False),
+    Column("ticker", Text, nullable=False),
+    Column("signal_type", Text, nullable=False),
+    # JSON blob so the schema stays platform-agnostic; Slack stores ts+channel,
+    # a future Telegram integration stores message_id+chat_id, etc.
+    Column("notification_metadata", Text, nullable=False),
+    Column("status", Text, nullable=False, default="pending"),   # pending | approved | rejected | failed
+    Column("created_at", Text, nullable=False),
+    Column("resolved_at", Text),
 )
 
 

@@ -67,7 +67,7 @@ def cmd_agent(args) -> None:
 
     with engine.connect() as conn:
         broker = _build_alpaca_broker(settings)
-        notifier = SlackNotifier(settings.slack_webhook_url)
+        notifier = SlackNotifier(settings.slack_bot_token, settings.slack_channel_id)
         orchestrator = Orchestrator(broker, conn, settings, notifier)
 
         if args.dry_run:
@@ -87,6 +87,8 @@ def cmd_agent(args) -> None:
                 sys.exit(1)
             return
 
+        from utils.slack_actions import start_socket_mode
+        start_socket_mode(broker, settings, notifier)
         sched_module.start(orchestrator, timezone=settings.agent_timezone)
 
 

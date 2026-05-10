@@ -244,7 +244,8 @@ class Orchestrator:
         logger.info(f"  DB path: {self._settings.db_path}")
         logger.info(f"  Trading mode: {self._settings.trading_mode}")
         logger.info(f"  Require approval: {self._settings.require_approval}")
-        logger.info(f"  Slack webhook configured: {'yes' if self._settings.slack_webhook_url else 'no'}")
+        logger.info(f"  Slack bot token configured: {'yes' if self._settings.slack_bot_token else 'no'}")
+        logger.info(f"  Slack interactive buttons: {'enabled' if self._settings.slack_app_token else 'disabled (SLACK_APP_TOKEN not set)'}")
         logger.info("Dry run complete. All systems ready.")
 
 
