@@ -1,0 +1,11 @@
+services:
+  agent:
+    build: .
+    image: quant-lab-agent
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # SQLite database persists on the host so trade history survives restarts
+      - ./trading_system.db:/app/trading_system.db
+      # Logs persist on the host for inspection without entering the container
+      - ./logs:/app/logs

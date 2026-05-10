@@ -1,0 +1,31 @@
+# Production-only dependencies for the trading agent.
+# Excludes dev tools (pytest), notebooks (jupyter, plotly), and
+# backtesting-only packages (vectorbt, ta) to keep the image small.
+
+# Broker APIs
+alpaca-py
+
+# Data
+yfinance
+pandas
+numpy
+
+# Utilities
+python-dotenv
+loguru
+pyyaml
+
+# Web scraping (Capitol Trades)
+requests
+beautifulsoup4
+fake-useragent
+tenacity
+
+# Scheduling
+APScheduler>=3.10
+
+# Slack notifications
+slack-sdk
+
+# Database
+sqlalchemy

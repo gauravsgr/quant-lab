@@ -1,0 +1,25 @@
+# Git
+.git/
+.gitignore
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+
+# Secrets and local state (never bake into the image)
+.env
+trading_system.db
+
+# Generated output (mounted as volumes at runtime)
+logs/
+backtesting/results/
+data/cache/
+
+# Dev-only
+notebooks/
+CLAUDE.md
