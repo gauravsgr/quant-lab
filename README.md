@@ -54,7 +54,8 @@ quant-lab/
 ├── utils/
 │   ├── rate_limiter.py           # sliding-window rate limiter decorator
 │   ├── logging.py                # loguru setup (colorized stderr + serialized file sink)
-│   └── notifier.py               # Slack Block Kit notifications
+│   ├── notifier.py               # Slack Block Kit notifications via Web API
+│   └── slack_actions.py          # Socket Mode listener for Approve/Reject button callbacks
 ├── notebooks/                    # analysis only; reads results/ and logs/
 ├── logs/                         # gitignored; structured JSON trade logs
 └── tests/
@@ -273,10 +274,12 @@ Copy `.env.example` to `.env` and fill in real values. Never commit `.env`.
 | `ALPACA_SECRET_KEY` | Yes | Alpaca API secret |
 | `ALPACA_BASE_URL` | No | Defaults to paper endpoint |
 | `ADANOS_API_KEY` | Yes | Adanos Market Sentiment API key |
-| `SLACK_WEBHOOK_URL` | Yes | Incoming webhook URL for trade alerts |
+| `SLACK_BOT_TOKEN` | Yes | Slack bot token (`xoxb-...`) for posting messages |
+| `SLACK_APP_TOKEN` | No | Slack app token (`xapp-...`) for Socket Mode; required for interactive Approve/Reject buttons |
+| `SLACK_CHANNEL_ID` | Yes | Slack channel ID where trade alerts are posted |
 | `DB_PATH` | No | SQLite file path (default: `trading_system.db`) |
 | `AGENT_TIMEZONE` | No | Scheduler timezone (default: `America/New_York`) |
-| `REQUIRE_APPROVAL` | No | `true` to notify only without executing; `false` to auto-execute |
+| `REQUIRE_APPROVAL` | No | `false` (default): auto-execute and notify Slack as FYI. `true`: send signal to Slack with Approve/Reject buttons; agent waits for your click before trading. |
 
 ## Data sources
 
@@ -311,12 +314,13 @@ All weights and thresholds are in `config/strategies/confluence.yaml` and can be
 
 ## SQLite schema
 
-Four tables are maintained in `trading_system.db`:
+Five tables are maintained in `trading_system.db`:
 
 - `signals` - every scored signal with all raw inputs
 - `orders` - every submitted order plus trailing stop state
 - `performance` - daily mark-to-market records; includes ghost trades (signals not executed)
 - `adanos_usage` - monthly call counter for budget tracking
+- `pending_approvals` - signals awaiting Slack approval; resolved when Approve or Reject is clicked
 
 ## Paper vs live trading
 
