@@ -100,11 +100,12 @@ class AdanosClient:
         """
         self._check_budget()
 
-        headers = {"Authorization": f"ApiKey {self._api_key}"}
+        headers = {"X-API-Key": self._api_key}
         try:
             resp = requests.get(
                 f"{ADANOS_BASE_URL}{ADANOS_TRENDING_PATH}",
                 headers=headers,
+                params={"limit": 100},
                 timeout=15,
             )
             resp.raise_for_status()
