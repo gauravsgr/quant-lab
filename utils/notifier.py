@@ -148,6 +148,31 @@ class SlackNotifier:
         except SlackApiError as e:
             logger.error(f"Slack message update failed: {e}")
 
+    def send_morning_summary(
+        self,
+        all_signals: list,
+        traded_count: int,
+        tickers_scanned: int,
+        pol_count: int,
+    ) -> None:
+        """Send a morning cycle summary to Slack, even when no trades are made.
+
+        Args:
+            all_signals: All Signal objects generated this morning.
+            traded_count: Number of orders actually submitted.
+            tickers_scanned: Total tickers fetched from Adanos.
+            pol_count: Number of congressional disclosures found today.
+        """
+        blocks = _build_morning_summary_blocks(all_signals, traded_count, tickers_scanned, pol_count)
+        try:
+            self._client.chat_postMessage(
+                channel=self._channel_id,
+                blocks=blocks,
+                text="Morning Scan Complete",
+            )
+        except SlackApiError as e:
+            logger.error(f"Slack morning summary error: {e}")
+
     def send_daily_summary(self, closed_orders: list[dict], ghost_trades: list[dict]) -> None:
         """Send the end-of-day summary with closed positions and ghost trades.
 
@@ -480,6 +505,84 @@ def _build_counter_considerations(signal: Signal, is_buy: bool) -> str:
         )
 
     return "\n".join(counters)
+
+
+def _build_morning_summary_blocks(
+    all_signals: list,
+    traded_count: int,
+    tickers_scanned: int,
+    pol_count: int,
+) -> list:
+    """Build Block Kit blocks for the morning cycle summary.
+
+    Always sent regardless of whether trades were made. Shows scan stats,
+    top signals by confidence, and a plain-language reason if nothing traded.
+    """
+    from strategies.base import Signal
+    date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    actionable = [s for s in all_signals if s.signal_type != "NEUTRAL"]
+    neutral = [s for s in all_signals if s.signal_type == "NEUTRAL"]
+    top5 = sorted(all_signals, key=lambda s: s.confidence, reverse=True)[:5]
+
+    if traded_count > 0:
+        headline = f"Morning Scan — {traded_count} trade{'s' if traded_count != 1 else ''} executed"
+    elif actionable:
+        headline = "Morning Scan — signals found but not traded (approval pending or below threshold)"
+    else:
+        headline = "Morning Scan — no actionable signals today"
+
+    stats = (
+        f"*Tickers scanned:* {tickers_scanned}   "
+        f"*Congressional disclosures:* {pol_count}   "
+        f"*Actionable signals:* {len(actionable)}   "
+        f"*Trades executed:* {traded_count}"
+    )
+
+    top_lines = []
+    for s in top5:
+        icon = "🟢" if s.signal_type == "STRONG_BUY" else ("🔴" if s.signal_type == "STRONG_PUT" else "⚪")
+        sentiment_str = f"{s.sentiment_score:+.2f}" if s.sentiment_score is not None else "n/a"
+        pol_str = s.politician_action or "none"
+        analyst_str = s.analyst_rating or "none"
+        top_lines.append(
+            f"{icon} *{s.ticker}*  conf={s.confidence:.2f}  "
+            f"sent={sentiment_str}  pol={pol_str}  analyst={analyst_str}"
+        )
+
+    if not actionable and not traded_count:
+        if not pol_count:
+            reason = (
+                "No congressional disclosures in the last 3 days (politician weight = 0 for all tickers). "
+                "Confidence scores stay low without that component. No tickers crossed the 0.65 threshold."
+            )
+        else:
+            reason = "Sentiment scores were below the ±0.70 threshold required to trigger a STRONG_BUY or STRONG_PUT signal."
+    else:
+        reason = None
+
+    blocks = [
+        {"type": "divider"},
+        {"type": "header", "text": {"type": "plain_text", "text": f"📊 {headline}", "emoji": True}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"_{date}_\n\n{stats}"}},
+    ]
+
+    if top5:
+        blocks.append({"type": "divider"})
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "*Top 5 signals by confidence:*\n" + "\n".join(top_lines)},
+        })
+
+    if reason:
+        blocks.append({"type": "divider"})
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*Why no trades:* {reason}"},
+        })
+
+    blocks.append({"type": "divider"})
+    return blocks
 
 
 def _build_daily_summary_blocks(closed_orders: list[dict], ghost_trades: list[dict]) -> list:

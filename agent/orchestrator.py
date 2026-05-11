@@ -162,6 +162,14 @@ class Orchestrator:
             if order_id:
                 traded_tickers.add(signal.ticker)
 
+        if self._notifier:
+            self._notifier.send_morning_summary(
+                all_signals=all_signals,
+                traded_count=len(traded_tickers),
+                tickers_scanned=len(tickers),
+                pol_count=len(pol_map),
+            )
+
         logger.info(
             f"=== Morning cycle complete: {len(all_signals)} signals, {len(traded_tickers)} trades ==="
         )
