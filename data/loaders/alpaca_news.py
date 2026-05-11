@@ -53,7 +53,7 @@ class AlpacaNewsClient:
         Returns:
             List of Alpaca news article objects.
         """
-        req = NewsRequest(symbols=tickers, limit=limit, start=start)
+        req = NewsRequest(symbols=",".join(tickers), limit=limit, start=start)
         news = self._client.get_news(req)
         return news.data.get("news", []) if hasattr(news, "data") else []
 

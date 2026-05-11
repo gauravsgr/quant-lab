@@ -11,7 +11,9 @@ Typical usage:
     rating = get_analyst_rating("AAPL")
     ratings_map = get_ratings_batch(["AAPL", "NVDA", "MSFT"])
 """
+import io
 import time
+import contextlib
 import yfinance as yf
 from loguru import logger
 
@@ -61,10 +63,11 @@ def _fetch_ticker_info(ticker: str) -> dict:
             info: Dict of yfinance ticker metadata (includes targetMeanPrice).
     """
     t = yf.Ticker(ticker)
-    return {
-        "recommendations": t.recommendations,
-        "info": t.info,
-    }
+    with contextlib.redirect_stderr(io.StringIO()):
+        return {
+            "recommendations": t.recommendations,
+            "info": t.info,
+        }
 
 
 def get_analyst_rating(ticker: str) -> dict:
