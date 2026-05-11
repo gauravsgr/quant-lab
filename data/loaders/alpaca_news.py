@@ -12,7 +12,7 @@ Typical usage:
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.historical import NewsClient
 from alpaca.data.requests import NewsRequest
 from loguru import logger
 
@@ -37,7 +37,7 @@ class AlpacaNewsClient:
             api_key: Alpaca API key ID.
             secret_key: Alpaca API secret key.
         """
-        self._client = StockHistoricalDataClient(api_key, secret_key)
+        self._client = NewsClient(api_key, secret_key)
 
     @rate_limit(calls_per_min=200)
     def _fetch_news(self, tickers: list[str], limit: int, start: datetime) -> list:
