@@ -11,6 +11,7 @@ Typical usage:
     client = AdanosClient(api_key=settings.adanos_api_key, db_conn=conn)
     tickers = client.get_buzzing_tickers()  # raises BudgetExhausted if limit reached
 """
+import os
 from datetime import datetime, timezone
 
 import requests
@@ -19,7 +20,7 @@ from sqlalchemy.engine import Connection
 
 import db.repository as repo
 
-ADANOS_BASE_URL = "https://api.adanossentiment.com"  # update if endpoint changes
+ADANOS_BASE_URL = os.getenv("ADANOS_BASE_URL", "https://api.adanossentiment.com")
 BUDGET_LIMIT = 225  # hard stop before the 250/month free-tier cap
 
 
