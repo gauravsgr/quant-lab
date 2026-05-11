@@ -85,6 +85,9 @@ def submit_signal_order(
             analyst_price_target=signal.analyst_price_target,
             news_headline=signal.news_headline,
             confidence=signal.confidence,
+            technical_score=getattr(signal, "technical_score", None),
+            technical_rsi=getattr(signal, "technical_rsi", None),
+            technical_direction=getattr(signal, "technical_direction", None),
         )
         if notifier:
             metadata = notifier.send_signal_alert(

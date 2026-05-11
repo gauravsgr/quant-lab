@@ -25,6 +25,8 @@ from data.loaders.yfinance_ratings import get_ratings_batch
 from execution import portfolio, runner
 from strategies.base import Signal
 from strategies.confluence import ConfluenceStrategy, load_confluence_config
+from strategies.technical_buzz import TechnicalBuzzStrategy, load_technical_buzz_config
+from data.loaders.technical import compute_technical_signal
 from utils.notifier import SlackNotifier
 
 
@@ -66,8 +68,7 @@ class Orchestrator:
         self._settings = settings
         self._notifier = notifier
 
-        cfg = load_confluence_config()
-        self._strategy = ConfluenceStrategy(cfg)
+        self._strategy = TechnicalBuzzStrategy(load_technical_buzz_config())
         self._adanos = AdanosClient(settings.adanos_api_key, db_conn)
         self._news = AlpacaNewsClient(settings.alpaca_api_key, settings.alpaca_secret_key)
         self._capitol = CapitolTradesScraper()
@@ -95,9 +96,13 @@ class Orchestrator:
             logger.info("No buzzing tickers from Adanos today, morning cycle complete")
             return
 
-        tickers = [b["ticker"] for b in buzzing]
-        sentiment_map = {b["ticker"]: b["sentiment_score"] for b in buzzing}
-        logger.info(f"Adanos: {len(tickers)} buzzing tickers: {tickers}")
+        # Sort by buzz_score and take top N for technical analysis (reduces bar API calls)
+        top_n = self._strategy.cfg.buzz_top_n
+        buzzing_sorted = sorted(buzzing, key=lambda b: b.get("buzz_score", 0), reverse=True)
+        top_buzzing = buzzing_sorted[:top_n]
+        tickers = [b["ticker"] for b in top_buzzing]
+        sentiment_map = {b["ticker"]: b["sentiment_score"] for b in top_buzzing}
+        logger.info(f"Adanos: {len(buzzing)} tickers, analyzing top {len(tickers)} by buzz: {tickers}")
 
         political_trades = self._capitol.get_recent_trades(days_back=3)
         pol_map: dict[str, dict] = {}
@@ -108,6 +113,21 @@ class Orchestrator:
 
         news_map = self._news.get_news(tickers, limit=3)
         ratings_map = get_ratings_batch(tickers)
+
+        # Fetch OHLCV bars and compute technical signals for each ticker
+        technical_map: dict[str, dict] = {}
+        for ticker in tickers:
+            try:
+                bars = self._broker.get_bars(ticker, limit=60)
+                technical_map[ticker] = compute_technical_signal(bars)
+                t = technical_map[ticker]
+                logger.debug(
+                    f"{ticker} technical: dir={t['direction']} score={t['score']:.2f} "
+                    f"rsi={t['rsi']} macd={t['macd']} ma={t['ma']}"
+                )
+            except Exception as e:
+                logger.warning(f"Bars fetch failed for {ticker}: {e}")
+                technical_map[ticker] = {"score": 0.0, "direction": "neutral", "rsi": None, "macd": "neutral", "ma": "neutral"}
 
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         already_traded = repo.get_traded_tickers_for_date(self._conn, today)
@@ -121,6 +141,7 @@ class Orchestrator:
 
             signal = self._strategy.generate_signal(
                 ticker=ticker,
+                technical=technical_map.get(ticker),
                 sentiment_score=sentiment_map.get(ticker),
                 politician_action=pol.get("action") if pol else None,
                 politician_name=pol.get("politician") if pol else None,
@@ -138,11 +159,12 @@ class Orchestrator:
             all_signals.append(signal)
             logger.info(
                 f"{ticker}: signal={signal.signal_type} confidence={signal.confidence:.2f} "
-                f"sentiment={signal.sentiment_score} pol={signal.politician_action} "
-                f"analyst={signal.analyst_rating}"
+                f"tech={signal.technical_direction}({signal.technical_score:.2f}) "
+                f"rsi={signal.technical_rsi} sentiment={signal.sentiment_score} "
+                f"pol={signal.politician_action} analyst={signal.analyst_rating}"
             )
 
-        cfg = load_confluence_config()
+        cfg = load_technical_buzz_config()
         equity = self._broker.get_account_equity()
         traded_tickers: set[str] = set()
 

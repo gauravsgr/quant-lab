@@ -41,6 +41,9 @@ signals_table = Table(
     Column("analyst_price_target", Real),
     Column("news_headline", Text),
     Column("confidence", Real, nullable=False),
+    Column("technical_score", Real),
+    Column("technical_rsi", Real),
+    Column("technical_direction", Text),
     Column("created_at", Text, nullable=False),
 )
 
@@ -97,9 +100,27 @@ pending_approvals_table = Table(
 
 
 def create_all() -> None:
-    """Create all tables if they do not already exist.
+    """Create all tables if they do not already exist, then migrate new columns.
 
     Safe to call multiple times (idempotent). Should be called once at
     application startup before any DB reads or writes.
     """
     metadata.create_all(engine)
+    _migrate()
+
+
+def _migrate() -> None:
+    """Add columns introduced after initial schema creation (idempotent)."""
+    from sqlalchemy import text
+    new_cols = [
+        ("signals", "technical_score", "REAL"),
+        ("signals", "technical_rsi", "REAL"),
+        ("signals", "technical_direction", "TEXT"),
+    ]
+    with engine.connect() as conn:
+        for table, col, col_type in new_cols:
+            try:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
+                conn.commit()
+            except Exception:
+                pass  # column already exists

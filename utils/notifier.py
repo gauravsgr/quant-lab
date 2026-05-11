@@ -421,12 +421,33 @@ def _build_signal_breakdown(signal: Signal) -> str:
     """
     parts = []
 
+    tech_score = getattr(signal, "technical_score", None)
+    tech_dir = getattr(signal, "technical_direction", None)
+    tech_rsi = getattr(signal, "technical_rsi", None)
+    tech_macd = signal.components.get("macd") if signal.components else None
+    tech_ma = signal.components.get("ma") if signal.components else None
+    if tech_score is not None and tech_dir:
+        tech_label = "BULLISH" if tech_dir == "bullish" else ("BEARISH" if tech_dir == "bearish" else "NEUTRAL")
+        bar = _bar(max(0.0, tech_score) if tech_score >= 0 else max(0.0, -tech_score))
+        details = [
+            f"Composite score: {tech_score:+.2f} -> *{tech_label}*",
+            f"`{bar}`",
+        ]
+        if tech_rsi is not None:
+            rsi_note = "oversold" if tech_rsi < 35 else ("overbought" if tech_rsi > 65 else "neutral zone")
+            details.append(f"RSI(14): {tech_rsi:.1f} ({rsi_note})")
+        if tech_macd:
+            details.append(f"MACD histogram: {tech_macd}")
+        if tech_ma:
+            details.append(f"Price vs 20-day MA: {tech_ma}")
+        parts.append(f"*Technical Analysis (weight 50%)*\n" + "\n".join(details))
+
     if signal.sentiment_score is not None:
         s = signal.sentiment_score
         direction = "BULLISH" if s > 0 else "BEARISH"
         bar = _bar(max(0.0, s) if s > 0 else max(0.0, -s))
         buzz_line = f"Adanos sentiment score: {s:+.2f} -> *{direction}*\n`{bar}`"
-        parts.append(f"*Sentiment (weight 40%)*\n{buzz_line}")
+        parts.append(f"*Social Sentiment (weight 25%)*\n{buzz_line}")
 
     if signal.politician_name:
         pa = (signal.politician_action or "").upper()
@@ -440,7 +461,7 @@ def _build_signal_breakdown(signal: Signal) -> str:
             details.append(meta)
         if signal.politician_amount:
             details.append(f"Amount: {signal.politician_amount}")
-        parts.append(f"*Political Activity (weight 35%)*\n" + "\n".join(details))
+        parts.append(f"*Political Activity (bonus)*\n" + "\n".join(details))
 
     if signal.analyst_rating:
         total = signal.analyst_buy_count + signal.analyst_hold_count + signal.analyst_sell_count
@@ -456,7 +477,7 @@ def _build_signal_breakdown(signal: Signal) -> str:
         ]
         if signal.analyst_price_target:
             details.append(f"Mean price target: ${signal.analyst_price_target:.2f}")
-        parts.append(f"*Analyst Consensus (weight 25%)*\n" + "\n".join(details))
+        parts.append(f"*Analyst Consensus (weight 25%)*\n" + "\n".join(details))  # noqa: E501
 
     return "\n\n".join(parts) if parts else "_No signal breakdown available_"
 

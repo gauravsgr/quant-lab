@@ -1,0 +1,25 @@
+weights:
+  technical: 0.50   # primary: RSI + MACD + MA crossover composite score
+  sentiment: 0.25   # Adanos social sentiment confirms direction
+  analyst: 0.25     # analyst consensus adds conviction
+
+thresholds:
+  min_confidence_to_trade: 0.60
+  buzz_top_n: 30    # only fetch bars for top N tickers by Adanos buzz_score
+
+# Bullishness score per analyst rating (used for buy-direction confidence).
+# For put signals the score is inverted: 1.0 - analyst_score.
+analyst_scores:
+  Strong Buy: 1.0
+  Buy: 0.75
+  Hold: 0.50
+  Sell: 0.25
+  Strong Sell: 0.0
+
+# Congressional trade: when pol_action aligns with signal direction,
+# boost confidence by this amount (capped at 1.0).
+politician_boost: 0.10
+
+position_sizing:
+  max_position_pct: 0.05
+  trailing_stop_pct: 0.10

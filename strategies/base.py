@@ -59,6 +59,9 @@ class Signal:
     analyst_sell_count: int = 0
     analyst_price_target: Optional[float] = None
     news_headline: Optional[str] = None
+    technical_score: Optional[float] = None       # composite technical score in [-1, 1]
+    technical_direction: Optional[str] = None     # "bullish", "bearish", or "neutral"
+    technical_rsi: Optional[float] = None         # RSI(14) value at signal time
     components: dict = field(default_factory=dict)  # raw component scores for audit
 
 

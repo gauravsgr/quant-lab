@@ -79,6 +79,9 @@ def get_signal_by_id(conn: Connection, signal_id: int):
         analyst_price_target=r.get("analyst_price_target"),
         news_headline=r.get("news_headline"),
         disclosure_url=None,  # not persisted in DB
+        technical_score=r.get("technical_score"),
+        technical_direction=r.get("technical_direction"),
+        technical_rsi=r.get("technical_rsi"),
     )
 
 
