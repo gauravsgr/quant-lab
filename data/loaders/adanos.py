@@ -100,7 +100,7 @@ class AdanosClient:
         """
         self._check_budget()
 
-        headers = {"Authorization": f"Bearer {self._api_key}"}
+        headers = {"Authorization": f"ApiKey {self._api_key}"}
         try:
             resp = requests.get(
                 f"{ADANOS_BASE_URL}{ADANOS_TRENDING_PATH}",
