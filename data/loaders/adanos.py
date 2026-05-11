@@ -20,7 +20,8 @@ from sqlalchemy.engine import Connection
 
 import db.repository as repo
 
-ADANOS_BASE_URL = os.getenv("ADANOS_BASE_URL", "https://api.adanossentiment.com")
+ADANOS_BASE_URL = os.getenv("ADANOS_BASE_URL", "https://api.adanos.org")
+ADANOS_TRENDING_PATH = "/reddit/stocks/v1/trending"
 BUDGET_LIMIT = 225  # hard stop before the 250/month free-tier cap
 
 
@@ -102,7 +103,7 @@ class AdanosClient:
         headers = {"Authorization": f"Bearer {self._api_key}"}
         try:
             resp = requests.get(
-                f"{ADANOS_BASE_URL}/v1/buzz",
+                f"{ADANOS_BASE_URL}{ADANOS_TRENDING_PATH}",
                 headers=headers,
                 timeout=15,
             )
@@ -142,7 +143,7 @@ def _parse_adanos_response(data: dict | list) -> list[dict]:
         results.append({
             "ticker": ticker.upper(),
             "sentiment_score": max(-1.0, min(1.0, score)),
-            "buzz_rank": item.get("rank", item.get("buzz_rank", 0)),
-            "source_count": item.get("source_count", item.get("mentions", 0)),
+            "buzz_rank": item.get("buzz_score", item.get("rank", item.get("buzz_rank", 0))),
+            "source_count": item.get("mentions", item.get("source_count", 0)),
         })
     return results
