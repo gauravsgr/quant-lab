@@ -214,7 +214,7 @@ class AlpacaBroker(Broker):
         req = StockBarsRequest(symbol_or_symbols=ticker, timeframe=tf, limit=limit)
         bars = self._data.get_stock_bars(req)
         result = []
-        for bar in bars[ticker]:
+        for bar in bars.data.get(ticker, []):
             result.append({
                 "timestamp": str(bar.timestamp),
                 "open": float(bar.open),
