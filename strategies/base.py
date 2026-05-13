@@ -59,9 +59,16 @@ class Signal:
     analyst_sell_count: int = 0
     analyst_price_target: Optional[float] = None
     news_headline: Optional[str] = None
+    news_url: Optional[str] = None           # direct article URL from Alpaca News
     technical_score: Optional[float] = None       # composite technical score in [-1, 1]
     technical_direction: Optional[str] = None     # "bullish", "bearish", or "neutral"
     technical_rsi: Optional[float] = None         # RSI(14) value at signal time
+    strategy_name: str = ""                       # which strategy generated this signal
+    catalyst_type: Optional[str] = None           # e.g. "supply_deal", "gov_contract"
+    catalyst_summary: Optional[str] = None        # human-readable catalyst description
+    program_match: Optional[str] = None           # matched gov program name (e.g. "BEAD")
+    company_name: Optional[str] = None            # full company name from yfinance
+    company_description: Optional[str] = None     # 1-line business description
     components: dict = field(default_factory=dict)  # raw component scores for audit
 
 
@@ -83,4 +90,31 @@ class Strategy(ABC):
 
         Returns:
             A Signal instance, or None if no actionable signal is found.
+        """
+
+
+class StandaloneStrategy(ABC):
+    """Base class for strategies that consume a DataBundle and return multiple signals.
+
+    Each standalone strategy receives the full pre-fetched DataBundle (bars, news,
+    ratings, political trades, buzz, catalyst hits) and returns a list of Signals —
+    one per ticker that passes its internal threshold.
+
+    The `name` property must match the name key in config/strategies/registry.yaml.
+    """
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Unique strategy identifier used in registry and Slack output."""
+
+    @abstractmethod
+    def run(self, bundle) -> list[Signal]:
+        """Scan the full DataBundle and return signals above this strategy's threshold.
+
+        Args:
+            bundle: DataBundle instance with all data pre-fetched for today.
+
+        Returns:
+            List of Signal instances (may be empty). NEUTRAL signals are excluded.
         """

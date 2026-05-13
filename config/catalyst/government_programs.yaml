@@ -1,0 +1,43 @@
+# Government programs and their primary beneficiary tickers.
+# Used by the CatalystStrategy (Layer 2) to flag tickers with structural tailwinds.
+# Update quarterly as programs evolve. Source: public program documentation.
+
+BEAD:
+  description: "$42B broadband expansion — fiber optic infrastructure demand"
+  beneficiaries: [GLW, VIAV, LITE, INFN, CIEN, COMM, CSCO, JNPR]
+
+CHIPS_Act:
+  description: "US semiconductor manufacturing incentives (~$52B)"
+  beneficiaries: [AMAT, LRCX, KLAC, ONTO, NVDA, INTC, TXN, QCOM, MCHP, SWKS]
+
+IRA_Clean_Energy:
+  description: "Inflation Reduction Act clean energy tax credits"
+  beneficiaries: [ENPH, SEDG, RUN, FSLR, ARRY, NEE, AES, VST, NRG, CEG]
+
+Infrastructure_Bill:
+  description: "IIJA grid modernization, EV charging, and broadband ($1.2T)"
+  beneficiaries: [AMPS, CHPT, EVGO, PWR, MYR, REZI, GLW, AMT, ABT]
+
+DoD_AI:
+  description: "Department of Defense AI modernization contracts"
+  beneficiaries: [PLTR, LDOS, SAIC, L3HAR, NOC, LMT, RTX, MSFT, AMZN, GOOG]
+
+Quantum_Computing:
+  description: "NSF/DARPA quantum computing research grants"
+  beneficiaries: [IBM, IONQ, RGTI, QUBT, MSFT, GOOG, AMZN]
+
+Space_Force:
+  description: "Space Force and NASA launch/satellite contracts"
+  beneficiaries: [LMT, RTX, NOC, BA, RKLB, SPCE, VSAT]
+
+Drug_Negotiation:
+  description: "IRA Medicare drug price negotiation — benefiting non-negotiated drugs"
+  beneficiaries: [LLY, ABBV, AMGN, REGN, VRTX, BIIB, BMY, MRK]
+
+Nuclear_Revival:
+  description: "DOE nuclear energy loan guarantees and SMR support"
+  beneficiaries: [CEG, VST, ETR, NRG, GE, BWX, UUUU]
+
+Grid_Storage:
+  description: "DOE grid storage and battery programs"
+  beneficiaries: [TSLA, ENPH, SEDG, FLNC, GS, NEE, AES]

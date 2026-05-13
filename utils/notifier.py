@@ -34,9 +34,9 @@ def _bar(score: float, width: int = 10) -> str:
 
 
 def _reddit_url(ticker: str) -> str:
-    """Build a Reddit hot-search URL for a ticker symbol."""
+    """Build a Reddit recent-search URL for a ticker symbol."""
     q = urllib.parse.quote(f"${ticker}")
-    return f"https://www.reddit.com/search/?q={q}&sort=hot"
+    return f"https://www.reddit.com/search/?q={q}&sort=new&t=week"
 
 
 def _google_news_url(ticker: str) -> str:
@@ -147,6 +147,112 @@ class SlackNotifier:
             self._client.chat_update(channel=channel, ts=ts, blocks=blocks, text=text)
         except SlackApiError as e:
             logger.error(f"Slack message update failed: {e}")
+
+    def send_morning_summary_multi_strategy(
+        self,
+        signals_by_strategy: dict,
+        aggregated: list,
+        traded_count: int,
+        tickers_scanned: int,
+        pol_count: int,
+        catalyst_count: int = 0,
+        signal_id_map: Optional[dict] = None,
+        options_ctx: Optional[dict] = None,
+        require_approval: bool = False,
+    ) -> None:
+        """Send a single Slack message with all strategies' signals, options params, and action buttons.
+
+        One chat_postMessage with up to 50 blocks. Structure:
+            [1] Header with scan stats
+            Per strategy (max 6, only those with signals):
+                [1] Divider
+                [1] Strategy title header
+                [1] Compact table of all signals (mrkdwn rows)
+                Per signal (up to 2):
+                    [1] Signal detail card (company, rationale, options params, counter)
+                    [1] Actions block (Approve/Reject buttons) or context link row
+
+        Args:
+            signals_by_strategy: Dict mapping strategy_name → list[Signal].
+            aggregated: List of AggregatedSignal from SignalAggregator.
+            traded_count: Orders actually submitted this cycle.
+            tickers_scanned: Total watchlist tickers analyzed.
+            pol_count: Number of Capitol Trades disclosures found.
+            catalyst_count: Number of catalyst hits found.
+            signal_id_map: ticker → {strategy_name → signal DB id} for button values.
+            options_ctx: (ticker, "call"/"put") → full contract dict from find_atm_contract_full.
+            require_approval: When True, show Approve/Reject buttons instead of executed status.
+        """
+        signal_id_map = signal_id_map or {}
+        options_ctx = options_ctx or {}
+
+        blocks: list = []
+
+        # ── Header ────────────────────────────────────────────────────────────
+        blocks += _build_single_message_header(
+            signals_by_strategy, aggregated, traded_count,
+            tickers_scanned, pol_count, catalyst_count,
+        )
+
+        STRATEGY_META = [
+            ("technical",              "📈 TECHNICAL",          "RSI · MACD · Moving Averages"),
+            ("sentiment",              "😄 SENTIMENT",           "Reddit · StockTwits"),
+            ("political_news",         "🏛️ POLITICAL TRADES",   "Capitol Trades + News"),
+            ("catalyst",               "🔍 CATALYST",            "Business Events · Gov Programs"),
+            ("technical_buzz_ensemble","🔁 TECH+BUZZ ENSEMBLE",  "Technical × Sentiment"),
+            ("full_confluence",        "🎯 FULL ENSEMBLE",       "All Sources Combined"),
+        ]
+
+        for strategy_name, title, subtitle in STRATEGY_META:
+            if len(blocks) >= 46:
+                break
+            sigs = signals_by_strategy.get(strategy_name, [])
+            actionable = [s for s in sigs if s.signal_type != "NEUTRAL"]
+            if not actionable:
+                continue
+
+            blocks.append({"type": "divider"})
+            blocks.append({
+                "type": "header",
+                "text": {"type": "plain_text", "text": f"{title}  ({subtitle})", "emoji": True},
+            })
+
+            # ASCII code-block grid table (all signals + options columns)
+            blocks.append(_build_strategy_table_block(actionable, strategy_name, options_ctx))
+
+            # Per-signal detail cards (max 2 per strategy to stay in block budget)
+            detail_count = 0
+            for sig in actionable:
+                if detail_count >= 2 or len(blocks) >= 46:
+                    break
+                opt_type = "call" if sig.signal_type == "STRONG_BUY" else "put"
+                opt = options_ctx.get((sig.ticker, opt_type))
+                sid = signal_id_map.get(sig.ticker, {}).get(strategy_name)
+
+                card_text = _build_signal_detail_card_v2(sig, strategy_name, aggregated, opt)
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": card_text[:2900]},
+                })
+
+                if require_approval and sid is not None:
+                    blocks += _build_approval_buttons(sid)
+                else:
+                    blocks.append({
+                        "type": "context",
+                        "elements": [{"type": "mrkdwn", "text": _build_signal_links(sig)}],
+                    })
+
+                detail_count += 1
+
+        try:
+            self._client.chat_postMessage(
+                channel=self._channel_id,
+                blocks=blocks[:50],
+                text="Morning Scan Complete",
+            )
+        except SlackApiError as e:
+            logger.error(f"Slack morning summary error: {e}")
 
     def send_morning_summary(
         self,
@@ -526,6 +632,321 @@ def _build_counter_considerations(signal: Signal, is_buy: bool) -> str:
         )
 
     return "\n".join(counters)
+
+
+def _fmt_expiry(expiry: str) -> str:
+    """Format a YYYY-MM-DD expiry as 'Jun 20' for compact display."""
+    try:
+        dt = datetime.strptime(expiry, "%Y-%m-%d")
+        return dt.strftime("%b %-d")
+    except Exception:
+        return expiry
+
+
+def _build_signal_links(sig) -> str:
+    """Build a compact link row for a signal (news article URL + Reddit + Capitol Trades)."""
+    parts = []
+    if getattr(sig, "news_url", None):
+        headline_short = (sig.news_headline or "Article")[:50]
+        parts.append(f"<{sig.news_url}|📰 {headline_short}>")
+    else:
+        parts.append(f"<{_google_news_url(sig.ticker)}|📰 Google News>")
+    parts.append(f"<{_reddit_url(sig.ticker)}|💬 Reddit>")
+    if getattr(sig, "disclosure_url", None):
+        parts.append(f"<{sig.disclosure_url}|🏛️ Capitol Trades>")
+    return "  ·  ".join(parts)
+
+
+def _build_strategy_table_block(signals: list, strategy_name: str, options_ctx: dict) -> dict:
+    """Build a Slack section block containing a monospace ASCII grid table.
+
+    Every row has: Ticker | Company | Dir | Conf | [strategy cols] | Opt | Strike | Expiry | Prem | Mono | Delta | IV
+    Options columns show 'N/A' when no contract data is available.
+    Rendered as a triple-backtick code block for fixed-width alignment.
+    """
+    # ── Column definitions ────────────────────────────────────────────────────
+    BASE_HDRS = ["Ticker", "Company             ", "Dir", "Conf"]
+    BASE_W    = [6,         20,                    3,     4   ]
+
+    if strategy_name in ("technical", "technical_buzz_ensemble", "full_confluence"):
+        MID_HDRS = ["RSI ", "MACD", "MA  "]
+        MID_W    = [4,       4,      4   ]
+    elif strategy_name == "sentiment":
+        MID_HDRS = ["Sent  ", "Buzz "]
+        MID_W    = [6,         5    ]
+    elif strategy_name == "political_news":
+        MID_HDRS = ["Politician         ", "Chm"]
+        MID_W    = [19,                     3  ]
+    elif strategy_name == "catalyst":
+        MID_HDRS = ["CatType    ", "Prog   "]
+        MID_W    = [11,             7      ]
+    else:
+        MID_HDRS, MID_W = [], []
+
+    OPT_HDRS = ["Opt ", "Strike", "Expiry", "Prem ", "Mono", "Delta ", "IV%  "]
+    OPT_W    = [4,       6,        6,        5,       4,      6,        5     ]
+
+    ALL_HDRS = BASE_HDRS + MID_HDRS + OPT_HDRS
+    ALL_W    = BASE_W    + MID_W    + OPT_W
+
+    def row(*cells):
+        return "  ".join(str(c).ljust(w)[:w] for c, w in zip(cells, ALL_W))
+
+    sep = "  ".join("-" * w for w in ALL_W)
+    MAX_ROWS = 20  # keeps table well under Slack's 3000-char block limit
+    lines = [row(*ALL_HDRS), sep]
+
+    for sig in signals[:MAX_ROWS]:
+        opt_type = "call" if sig.signal_type == "STRONG_BUY" else "put"
+        opt = options_ctx.get((sig.ticker, opt_type)) or {}
+        comps = sig.components or {}
+
+        # Base columns
+        ticker  = sig.ticker[:6]
+        company = (sig.company_name or sig.ticker)[:20]
+        direct  = "BUY" if sig.signal_type == "STRONG_BUY" else "PUT"
+        conf    = f"{sig.confidence:.2f}"
+
+        # Strategy-specific columns
+        if strategy_name in ("technical", "technical_buzz_ensemble", "full_confluence"):
+            rsi  = f"{sig.technical_rsi:.0f}" if sig.technical_rsi else "N/A"
+            macd_raw = str(comps.get("macd", "")).lower()
+            macd = "Bull" if "bull" in macd_raw else ("Bear" if "bear" in macd_raw else "Neut")
+            ma_raw = str(comps.get("ma", "")).lower()
+            ma   = "Abv" if "above" in ma_raw else ("Blw" if "below" in ma_raw else "N/A")
+            mid_vals = [rsi, macd, ma]
+        elif strategy_name == "sentiment":
+            sent = f"{sig.sentiment_score:+.2f}" if sig.sentiment_score is not None else "N/A"
+            buzz = str(comps.get("buzz_score", "N/A"))[:5]
+            mid_vals = [sent, buzz]
+        elif strategy_name == "political_news":
+            pol = (sig.politician_name or "?")[:19]
+            chm = (sig.politician_chamber or "?")[:3]
+            mid_vals = [pol, chm]
+        elif strategy_name == "catalyst":
+            cat  = (sig.catalyst_type or "?")[:11]
+            prog = (sig.program_match or "?")[:7]
+            mid_vals = [cat, prog]
+        else:
+            mid_vals = []
+
+        # Options columns — show N/A when data is unavailable
+        if opt:
+            o_type  = opt_type.upper()[:4]
+            strike  = f"${opt.get('strike', 0):.0f}"
+            expiry  = _fmt_expiry(opt.get("expiry", ""))[:6]
+            prem    = f"${opt.get('mid', 0):.2f}"
+            mono    = "ITM" if opt.get("itm") else "OTM"
+            delta   = f"{opt.get('delta', 0):+.2f}"
+            iv_raw  = opt.get("implied_volatility", 0)
+            iv_str  = f"{iv_raw * 100:.0f}%" if iv_raw < 5 else f"{iv_raw:.0f}%"
+        else:
+            o_type = strike = expiry = prem = mono = delta = iv_str = "N/A"
+
+        lines.append(row(ticker, company, direct, conf, *mid_vals, o_type, strike, expiry, prem, mono, delta, iv_str))
+
+    if len(signals) > MAX_ROWS:
+        lines.append(f"... {len(signals) - MAX_ROWS} more signals (showing top {MAX_ROWS})")
+
+    table_text = "```\n" + "\n".join(lines) + "\n```"
+    # Slack hard limit is 3000 chars; truncate body rows if still over (edge case)
+    if len(table_text) > 2990:
+        table_text = table_text[:2980] + "\n```"
+    return {"type": "section", "text": {"type": "mrkdwn", "text": table_text}}
+
+
+def _build_single_message_header(
+    signals_by_strategy: dict,
+    aggregated: list,
+    traded_count: int,
+    tickers_scanned: int,
+    pol_count: int,
+    catalyst_count: int,
+) -> list:
+    """Build the 3-block header section for the single-message morning summary."""
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M ET")
+
+    total_actionable = sum(
+        len([s for s in sigs if s.signal_type != "NEUTRAL"])
+        for sigs in signals_by_strategy.values()
+        if isinstance(sigs, list)
+    )
+    high_conviction = sum(1 for ag in aggregated if ag.agreement_count >= 2 and not ag.conflict)
+    conflict_count = sum(1 for ag in aggregated if ag.conflict)
+
+    stats = (
+        f"*{tickers_scanned}* tickers   *{pol_count}* disclosures   "
+        f"*{catalyst_count}* catalysts   *{total_actionable}* signals   "
+        f"*{traded_count}* trades"
+    )
+
+    conviction_parts = []
+    for ag in aggregated:
+        if ag.agreement_count >= 2 and not ag.conflict:
+            icon = "🟢" if ag.final_signal_type == "STRONG_BUY" else "🔴"
+            conviction_parts.append(f"{icon} *{ag.ticker}* ({ag.agreement_count}×, conf={ag.final_confidence:.2f})")
+    conviction_str = "  ".join(conviction_parts[:8]) if conviction_parts else "_None_"
+
+    conflict_parts = [f"⚠️ *{ag.ticker}*" for ag in aggregated if ag.conflict]
+    conflict_str = "  ".join(conflict_parts[:5]) if conflict_parts else "_None_"
+
+    detail = f"*High conviction:* {conviction_str}"
+    if conflict_count:
+        detail += f"\n*Conflicted (skipped):* {conflict_str}"
+
+    return [
+        {"type": "divider"},
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": f"📊 Morning Scan — {date_str}", "emoji": True},
+        },
+        {"type": "section", "text": {"type": "mrkdwn", "text": stats}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": detail}},
+    ]
+
+
+def _build_signal_detail_card_v2(sig, strategy_name: str, aggregated: list, opt: Optional[dict]) -> str:
+    """Build the full mrkdwn text for a single signal detail card.
+
+    Includes: company name/desc, signal direction, options contract parameters
+    (strike, expiry, premium, ITM/OTM, intrinsic, time value, IV, delta, gamma,
+    theta, multiplier, contract value), signal rationale, and counter-argument.
+    """
+    icon = "🟢" if sig.signal_type == "STRONG_BUY" else "🔴"
+    direction = "BUY (Call)" if sig.signal_type == "STRONG_BUY" else "PUT (Put)"
+    name = sig.company_name or sig.ticker
+    desc = (sig.company_description or "").strip()
+
+    # Ensemble agreement note
+    ag = next((a for a in aggregated if a.ticker == sig.ticker), None)
+    ensemble_note = ""
+    if ag and ag.agreement_count >= 2:
+        ensemble_note = f"  ✅ *{ag.agreement_count} strategies agree* (ensemble conf={ag.final_confidence:.2f})"
+    elif ag and ag.conflict:
+        ensemble_note = "  ⚠️ *Conflicted with another strategy*"
+
+    lines = [
+        f"{icon} *{sig.ticker} — {name}*{ensemble_note}",
+        f"*Signal:* {direction}  |  *Confidence:* {sig.confidence:.2f}",
+    ]
+    if desc:
+        lines.append(f"*Company:* {desc}")
+
+    # Signal rationale
+    reasons = []
+    if sig.technical_score is not None:
+        rsi = f"RSI={sig.technical_rsi:.0f}" if sig.technical_rsi else ""
+        macd = sig.components.get("macd", "") if sig.components else ""
+        ma = sig.components.get("ma", "") if sig.components else ""
+        reasons.append(
+            f"Technical: score={sig.technical_score:+.2f} ({sig.technical_direction})"
+            + (f", {rsi}" if rsi else "")
+            + (f", MACD={macd}" if macd else "")
+            + (f", price {ma} 20MA" if ma else "")
+        )
+    if sig.sentiment_score is not None:
+        reasons.append(f"Sentiment: {sig.sentiment_score:+.2f}")
+    if sig.politician_name:
+        reasons.append(
+            f"Political: {sig.politician_name} ({sig.politician_party or '?'}, "
+            f"{sig.politician_chamber or '?'}) "
+            f"{(sig.politician_action or '').upper()} {sig.politician_amount or ''}"
+        )
+    if sig.catalyst_summary:
+        reasons.append(f"Catalyst: {sig.catalyst_summary}")
+    if sig.analyst_rating:
+        reasons.append(
+            f"Analysts: {sig.analyst_rating} "
+            f"({sig.analyst_buy_count}B/{sig.analyst_hold_count}H/{sig.analyst_sell_count}S)"
+        )
+    if sig.news_headline:
+        reasons.append(f"News: _{sig.news_headline}_")
+
+    if reasons:
+        lines.append("\n*Signal reason:*\n" + "\n".join(f"• {r}" for r in reasons))
+
+    # Options contract block
+    if not opt:
+        lines.append("\n*📊 Options Contract:* _No active chain found for this ticker (market may be closed or contract unavailable)_")
+    elif opt:
+        opt_type_label = "CALL" if sig.signal_type == "STRONG_BUY" else "PUT"
+        strike = opt.get("strike", 0)
+        expiry = opt.get("expiry", "")
+        mid = opt.get("mid", 0)
+        cv = opt.get("contract_value", 0)
+        intrinsic = opt.get("intrinsic_value", 0)
+        tv = opt.get("time_value", 0)
+        itm = opt.get("itm", False)
+        dte = opt.get("days_to_expiry")
+        iv = opt.get("implied_volatility", 0)
+        delta = opt.get("delta", 0)
+        gamma = opt.get("gamma", 0)
+        theta = opt.get("theta", 0)
+        mult = opt.get("multiplier", 100)
+        price = opt.get("current_price", 0)
+        moneyness = "ITM" if itm else "OTM"
+        dte_str = f" ({dte}d)" if dte is not None else ""
+        iv_pct = f"{iv * 100:.1f}%" if iv < 5 else f"{iv:.1f}%"
+        lines.append(
+            f"\n*📊 Options Contract (ATM {opt_type_label}):*\n"
+            f"Symbol: `{opt.get('symbol', '?')}`  |  Strike: *${strike:.2f}*  |  "
+            f"Expiry: {_fmt_expiry(expiry)}{dte_str}\n"
+            f"Stock: ${price:.2f}  |  Premium (mid): *${mid:.2f}*  |  "
+            f"Contract value: ${cv:.0f}  |  Multiplier: {mult}×\n"
+            f"Moneyness: *{moneyness}*  |  Intrinsic: ${intrinsic:.2f}  |  "
+            f"Time value: ${tv:.2f}\n"
+            f"IV: {iv_pct}  |  Delta: {delta:+.3f}  |  "
+            f"Gamma: {gamma:.4f}  |  Theta: {theta:+.3f}/day"
+        )
+
+    # Counter-argument
+    counter = _build_counter_for_signal(sig)
+    lines.append(
+        f"\n*Counter:* {counter['argument']}\n"
+        f"*Dismissed:* {counter['dismissed']}"
+    )
+
+    return "\n".join(lines)
+
+
+def _build_counter_for_signal(sig) -> dict:
+    """Generate a context-appropriate counter-argument and dismissal for a signal."""
+    strategy = getattr(sig, "strategy_name", "")
+    is_buy = sig.signal_type == "STRONG_BUY"
+
+    if strategy == "technical":
+        if is_buy:
+            arg = "Technical momentum can reverse quickly if macro news breaks against the position."
+            dismissed = "Signal is short-term (25-40 day options); 10% trailing stop caps downside. Mean-reversion setups don't require macro tailwind."
+        else:
+            arg = "Bearish technicals can produce false negatives if broader market rallies."
+            dismissed = "MACD + RSI double-confirmation reduces false signals. Options expiry managed separately."
+    elif strategy == "sentiment":
+        if is_buy:
+            arg = "Reddit buzz is noisy; retail-driven moves can reverse within hours."
+            dismissed = "Used as a confirming signal only. Analyst consensus provides independent corroboration."
+        else:
+            arg = "Negative sentiment can be contrarian — bottoms sometimes form at peak pessimism."
+            dismissed = "Analyst consensus aligns; this is not a single-source bearish call."
+    elif strategy == "political_news":
+        arg = "Congressional disclosures lag by up to 45 days; the move may already be priced in."
+        dismissed = "News confirmation required — recent headline (< 7 days) shows thesis is still active."
+    elif strategy == "catalyst":
+        if sig.program_match:
+            arg = f"Being a {sig.program_match} beneficiary doesn't guarantee revenue this quarter."
+            dismissed = "Gov program timelines are multi-year; managed with short-dated options to limit time risk."
+        else:
+            arg = "Catalyst news may already be priced in by institutional investors."
+            dismissed = "Keyword match in recent headline (< 5 days). RSI checked against technical layer for confirmation."
+    elif strategy in ("technical_buzz_ensemble", "full_confluence"):
+        n_agree = (sig.components or {}).get("agreement_count", 1)
+        arg = f"Multi-strategy agreement ({n_agree} strategies) can create false confidence in correlated signals."
+        dismissed = "Strategies use independent data sources (charts, Reddit, Capitol Trades, Alpaca News) — genuine confirmation."
+    else:
+        arg = "Signal may be based on incomplete or lagging data."
+        dismissed = "Risk managed via conservative position sizing (5% of equity) and trailing stop."
+
+    return {"argument": arg, "dismissed": dismissed}
 
 
 def _build_morning_summary_blocks(
