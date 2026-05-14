@@ -165,6 +165,16 @@ class DataBundle:
         except Exception as e:
             logger.warning(f"Adanos fetch failed: {e}")
 
+        # --- Bars for buzz tickers not in watchlist (supplemental, not cached separately) ---
+        if buzz:
+            buzz_tickers = [item["ticker"] for item in buzz if item.get("ticker")]
+            missing_bar_tickers = [t for t in buzz_tickers if t not in bars]
+            if missing_bar_tickers:
+                logger.info(f"DataBundle: fetching bars for {len(missing_bar_tickers)} buzz tickers not in watchlist...")
+                extra_bars = _fetch_bars_batch(broker, missing_bar_tickers)
+                bars.update(extra_bars)
+                logger.info(f"DataBundle: added bars for {len(extra_bars)} buzz tickers")
+
         # --- Ratings + company info (cached; fetch for buzz + political tickers) ---
         ratings = cache.load_ratings(today) or {}
         company_info = cache.load_company_info(today) or {}

@@ -74,15 +74,22 @@ class TechnicalBuzzEnsemble(StandaloneStrategy):
 
         signals: list[Signal] = []
 
+        no_bars = []
+        no_signal = []
+        mismatch = []
+        low_conf = []
+
         for ticker in top_tickers:
             bars = bundle.bars.get(ticker)
             if not bars:
+                no_bars.append(ticker)
                 continue
 
             try:
                 tech = compute_technical_signal(bars)
             except Exception as e:
                 logger.debug(f"TechnicalBuzzEnsemble: technical error for {ticker}: {e}")
+                no_signal.append(ticker)
                 continue
 
             tech_score = tech.get("score", 0.0) or 0.0
@@ -103,6 +110,7 @@ class TechnicalBuzzEnsemble(StandaloneStrategy):
                 sentiment_c = max(0.0, -sentiment)
                 pol_aligned = (pol_map.get(ticker, {}).get("action", "").lower() in ("sell", "sale"))
             else:
+                mismatch.append(f"{ticker}(tech={tech_direction},sent={sentiment:+.2f})")
                 continue  # direction mismatch
 
             rating_data = bundle.ratings.get(ticker, {})
@@ -161,5 +169,15 @@ class TechnicalBuzzEnsemble(StandaloneStrategy):
             ))
 
         signals.sort(key=lambda s: s.confidence, reverse=True)
-        logger.info(f"TechnicalBuzzEnsemble: {len(signals)} signals from {len(top_tickers)} buzz tickers")
+        logger.info(
+            f"TechnicalBuzzEnsemble: {len(signals)} signals from {len(top_tickers)} buzz tickers "
+            f"(no_bars={len(no_bars)}, no_signal={len(no_signal)}, "
+            f"mismatch={len(mismatch)}, low_conf={len(low_conf)})"
+        )
+        if no_bars:
+            logger.debug(f"TechnicalBuzzEnsemble: tickers with no bars: {no_bars}")
+        if mismatch:
+            logger.debug(f"TechnicalBuzzEnsemble: direction mismatches: {mismatch[:10]}")
+        if low_conf:
+            logger.debug(f"TechnicalBuzzEnsemble: below threshold: {low_conf}")
         return signals
