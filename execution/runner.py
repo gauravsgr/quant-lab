@@ -32,6 +32,7 @@ def submit_signal_order(
     require_approval: bool = False,
     already_traded_tickers: Optional[set] = None,
     notifier=None,
+    signal_id: Optional[int] = None,
 ) -> Optional[int]:
     """Validate a signal and submit an order to the broker.
 
@@ -48,6 +49,7 @@ def submit_signal_order(
         require_approval: When True, notifies via Slack but does not submit the order.
         already_traded_tickers: Set of tickers traded today; used to prevent duplicates.
         notifier: Optional SlackNotifier instance for trade alerts.
+        signal_id: Pre-inserted signal DB ID from orchestrator; skips DB insertion when provided.
 
     Returns:
         Integer DB order ID on success, None if skipped or failed.
@@ -65,30 +67,32 @@ def submit_signal_order(
         return None
 
     if require_approval:
-        # Signal passed all checks. Insert it to DB first so we have a signal_id
-        # to embed in the button action value for the Socket Mode callback.
+        # Signal passed all checks. Insert it to DB (if not pre-inserted by orchestrator)
+        # to get a signal_id for embedding in Slack button action values.
         logger.info(f"Approval required for {signal.ticker}, inserting signal and awaiting Slack approval")
-        signal_id = repo.insert_signal(
-            db_conn,
-            ticker=signal.ticker,
-            signal_type=signal.signal_type,
-            sentiment_score=signal.sentiment_score,
-            politician_action=signal.politician_action,
-            politician_name=signal.politician_name,
-            politician_party=getattr(signal, "politician_party", None),
-            politician_chamber=getattr(signal, "politician_chamber", None),
-            politician_amount=getattr(signal, "politician_amount", None),
-            analyst_rating=signal.analyst_rating,
-            analyst_buy_count=signal.analyst_buy_count,
-            analyst_hold_count=signal.analyst_hold_count,
-            analyst_sell_count=signal.analyst_sell_count,
-            analyst_price_target=signal.analyst_price_target,
-            news_headline=signal.news_headline,
-            confidence=signal.confidence,
-            technical_score=getattr(signal, "technical_score", None),
-            technical_rsi=getattr(signal, "technical_rsi", None),
-            technical_direction=getattr(signal, "technical_direction", None),
-        )
+        if signal_id is None:
+            signal_id = repo.insert_signal(
+                db_conn,
+                ticker=signal.ticker,
+                signal_type=signal.signal_type,
+                sentiment_score=signal.sentiment_score,
+                politician_action=signal.politician_action,
+                politician_name=signal.politician_name,
+                politician_party=getattr(signal, "politician_party", None),
+                politician_chamber=getattr(signal, "politician_chamber", None),
+                politician_amount=getattr(signal, "politician_amount", None),
+                analyst_rating=signal.analyst_rating,
+                analyst_buy_count=signal.analyst_buy_count,
+                analyst_hold_count=signal.analyst_hold_count,
+                analyst_sell_count=signal.analyst_sell_count,
+                analyst_price_target=signal.analyst_price_target,
+                news_headline=signal.news_headline,
+                confidence=signal.confidence,
+                technical_score=getattr(signal, "technical_score", None),
+                technical_rsi=getattr(signal, "technical_rsi", None),
+                technical_direction=getattr(signal, "technical_direction", None),
+                strategy_name=getattr(signal, "strategy_name", None),
+            )
         if notifier:
             metadata = notifier.send_signal_alert(
                 signal, order=None, approval_pending=True, signal_id=signal_id
@@ -152,24 +156,30 @@ def submit_signal_order(
 
     stop_price = risk.compute_initial_stop(entry_price)
 
-    signal_id = repo.insert_signal(
-        db_conn,
-        ticker=signal.ticker,
-        signal_type=signal.signal_type,
-        sentiment_score=signal.sentiment_score,
-        politician_action=signal.politician_action,
-        politician_name=signal.politician_name,
-        politician_party=signal.politician_party,
-        politician_chamber=signal.politician_chamber,
-        politician_amount=signal.politician_amount,
-        analyst_rating=signal.analyst_rating,
-        analyst_buy_count=signal.analyst_buy_count,
-        analyst_hold_count=signal.analyst_hold_count,
-        analyst_sell_count=signal.analyst_sell_count,
-        analyst_price_target=signal.analyst_price_target,
-        news_headline=signal.news_headline,
-        confidence=signal.confidence,
-    )
+    # Use pre-inserted signal_id from orchestrator if available, otherwise insert now.
+    if signal_id is None:
+        signal_id = repo.insert_signal(
+            db_conn,
+            ticker=signal.ticker,
+            signal_type=signal.signal_type,
+            sentiment_score=signal.sentiment_score,
+            politician_action=signal.politician_action,
+            politician_name=signal.politician_name,
+            politician_party=signal.politician_party,
+            politician_chamber=signal.politician_chamber,
+            politician_amount=signal.politician_amount,
+            analyst_rating=signal.analyst_rating,
+            analyst_buy_count=signal.analyst_buy_count,
+            analyst_hold_count=signal.analyst_hold_count,
+            analyst_sell_count=signal.analyst_sell_count,
+            analyst_price_target=signal.analyst_price_target,
+            news_headline=signal.news_headline,
+            confidence=signal.confidence,
+            technical_score=getattr(signal, "technical_score", None),
+            technical_rsi=getattr(signal, "technical_rsi", None),
+            technical_direction=getattr(signal, "technical_direction", None),
+            strategy_name=getattr(signal, "strategy_name", None),
+        )
 
     order_id = repo.insert_order(
         db_conn,

@@ -14,7 +14,7 @@ Typical usage:
     equity = broker.get_account_equity()
 """
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date as date_type, datetime, timedelta, timezone
 from typing import Optional
 
 from alpaca.trading.client import TradingClient
@@ -295,15 +295,33 @@ class AlpacaBroker(Broker):
                 expiration_date_lte=str(exp_before),
                 type=option_type.lower(),
             )
-            chain = self._options_data.get_option_chain(req)
+            # API returns plain dict: {occ_symbol: OptionsSnapshot, ...}
+            raw: dict = self._options_data.get_option_chain(req)
             contracts = []
-            for contract in (chain.data.get(ticker, []) if hasattr(chain, "data") else []):
+            for occ_symbol, snap in raw.items():
+                try:
+                    # OCC format last 15 chars: YYMMDD + C/P + 8-digit strike*1000
+                    # e.g. "AAPL260612C00185000" → expiry=2026-06-12, strike=185.0
+                    suffix = occ_symbol[-15:]
+                    expiry_date = datetime.strptime(suffix[:6], "%y%m%d").strftime("%Y-%m-%d")
+                    strike = int(suffix[7:]) / 1000
+                except Exception:
+                    continue
+
+                quote  = snap.latest_quote   # Quote object or None
+                greeks = snap.greeks          # OptionsGreeks object or None
+
                 contracts.append({
-                    "symbol": getattr(contract, "symbol", ""),
-                    "strike": float(getattr(contract, "strike_price", 0)),
-                    "expiry": str(getattr(contract, "expiration_date", "")),
-                    "bid": float(getattr(contract, "bid_price", 0) or 0),
-                    "ask": float(getattr(contract, "ask_price", 0) or 0),
+                    "symbol":             occ_symbol,
+                    "strike":             strike,
+                    "expiry":             expiry_date,
+                    "bid":                float(getattr(quote,  "bid_price", 0) or 0),
+                    "ask":                float(getattr(quote,  "ask_price",  0) or 0),
+                    "open_interest":      int(getattr(snap,    "open_interest", 0) or 0),
+                    "implied_volatility": float(snap.implied_volatility or 0),
+                    "delta":              float(getattr(greeks, "delta", 0) or 0) if greeks else 0.0,
+                    "gamma":              float(getattr(greeks, "gamma", 0) or 0) if greeks else 0.0,
+                    "theta":              float(getattr(greeks, "theta", 0) or 0) if greeks else 0.0,
                 })
             return contracts
         except Exception as e:
@@ -334,3 +352,52 @@ class AlpacaBroker(Broker):
 
         atm = min(contracts, key=lambda c: abs(c["strike"] - current_price))
         return atm["symbol"]
+
+    def find_atm_contract_full(self, ticker: str, option_type: str) -> Optional[dict]:
+        """Return the full ATM contract dict enriched with pricing analytics.
+
+        Fetches the options chain, picks the strike closest to market price, and
+        computes intrinsic value, time value, moneyness, and days to expiry.
+
+        Args:
+            ticker: Underlying stock symbol.
+            option_type: "call" or "put".
+
+        Returns:
+            Dict with all chain fields plus: current_price, mid, contract_value,
+            intrinsic_value, time_value, itm (bool), days_to_expiry, multiplier.
+            Returns None if price or chain cannot be fetched.
+        """
+        current_price = self.get_latest_price(ticker)
+        if not current_price:
+            return None
+
+        contracts = self.get_options_chain(ticker, option_type)
+        if not contracts:
+            return None
+
+        atm = min(contracts, key=lambda c: abs(c["strike"] - current_price))
+        strike = atm["strike"]
+        mid = (atm["bid"] + atm["ask"]) / 2
+        is_call = option_type.lower() == "call"
+        intrinsic = max(0.0, current_price - strike) if is_call else max(0.0, strike - current_price)
+        itm = (current_price > strike) if is_call else (current_price < strike)
+
+        days_to_expiry = None
+        try:
+            expiry_date = datetime.strptime(atm["expiry"], "%Y-%m-%d").date()
+            days_to_expiry = (expiry_date - date_type.today()).days
+        except Exception:
+            pass
+
+        return {
+            **atm,
+            "current_price": round(current_price, 2),
+            "mid":            round(mid, 2),
+            "contract_value": round(mid * 100, 2),
+            "intrinsic_value": round(intrinsic, 2),
+            "time_value":      round(max(0.0, mid - intrinsic), 2),
+            "itm":             itm,
+            "days_to_expiry":  days_to_expiry,
+            "multiplier":      100,
+        }

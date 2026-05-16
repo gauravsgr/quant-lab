@@ -44,6 +44,7 @@ signals_table = Table(
     Column("technical_score", Real),
     Column("technical_rsi", Real),
     Column("technical_direction", Text),
+    Column("strategy_name", Text),
     Column("created_at", Text, nullable=False),
 )
 
@@ -116,6 +117,7 @@ def _migrate() -> None:
         ("signals", "technical_score", "REAL"),
         ("signals", "technical_rsi", "REAL"),
         ("signals", "technical_direction", "TEXT"),
+        ("signals", "strategy_name", "TEXT"),
     ]
     with engine.connect() as conn:
         for table, col, col_type in new_cols:

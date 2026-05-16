@@ -82,6 +82,7 @@ def get_signal_by_id(conn: Connection, signal_id: int):
         technical_score=r.get("technical_score"),
         technical_direction=r.get("technical_direction"),
         technical_rsi=r.get("technical_rsi"),
+        strategy_name=r.get("strategy_name") or "",
     )
 
 

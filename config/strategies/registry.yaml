@@ -1,0 +1,41 @@
+# Strategy registry — controls which strategies run each morning cycle.
+# Set enabled: false to disable a strategy without touching code.
+# The full_confluence ensemble always runs last (after all standalone strategies).
+
+strategies:
+  - name: technical
+    class: strategies.standalone.technical.TechnicalStrategy
+    enabled: true
+
+  - name: sentiment
+    class: strategies.standalone.sentiment.SentimentStrategy
+    enabled: true
+
+  - name: political_news
+    class: strategies.standalone.political_news.PoliticalNewsStrategy
+    enabled: true
+
+  - name: catalyst
+    class: strategies.standalone.catalyst.CatalystStrategy
+    enabled: true
+
+  - name: technical_buzz_ensemble
+    class: strategies.ensembles.technical_buzz.TechnicalBuzzEnsemble
+    enabled: true
+
+  - name: full_confluence
+    class: strategies.ensembles.full_confluence.FullEnsembleStrategy
+    enabled: true
+
+# Aggregator settings
+multi_strategy_boost: 0.08    # confidence boost per additional agreeing strategy beyond 1
+conflict_threshold: 2         # if this many strategies disagree, mark CONFLICTED
+min_confidence_to_execute: 0.55  # minimum final confidence to submit an order
+
+# Ensemble weights used by full_confluence strategy
+ensemble_weights:
+  technical: 0.25
+  sentiment: 0.20
+  political_news: 0.25
+  catalyst: 0.20
+  technical_buzz_ensemble: 0.10
